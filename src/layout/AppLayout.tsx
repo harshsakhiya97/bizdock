@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Outlet, useLocation } from 'react-router'
-import { LayoutGrid } from 'lucide-react'
-import { pageMeta } from './nav'
+import { metaFor } from './nav'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
 
@@ -18,7 +17,7 @@ function readCollapsed() {
 export function AppLayout() {
   const { pathname } = useLocation()
   const [collapsed, setCollapsed] = useState(readCollapsed)
-  const meta = pageMeta[pathname] ?? { title: 'BizDock', crumb: 'Overview', icon: LayoutGrid }
+  const meta = metaFor(pathname)
 
   function toggle() {
     setCollapsed((c) => {

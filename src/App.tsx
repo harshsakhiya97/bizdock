@@ -6,6 +6,8 @@ import { DashboardPage } from '@/pages/Dashboard'
 import { LoginPage } from '@/pages/Login'
 import { ProfilePage } from '@/pages/Profile'
 import { WhatsNewPage } from '@/pages/WhatsNew'
+import { TenantDetailPage } from '@/tenants/TenantDetailPage'
+import { TenantsPage } from '@/tenants/TenantsPage'
 
 export default function App() {
   return (
@@ -16,6 +18,8 @@ export default function App() {
           <Route element={<RequireAuth />}>
             <Route element={<AppLayout />}>
               <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/tenants" element={<TenantsPage />} />
+              <Route path="/tenants/:id" element={<TenantDetailPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/whats-new" element={<WhatsNewPage />} />
             </Route>
