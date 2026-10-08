@@ -29,7 +29,7 @@ export function CreateTenantDrawer({ open, onClose }: { open: boolean; onClose: 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     const d = domain.trim().toLowerCase()
-    if (!name.trim() || !appName.trim()) return setError('Tenant name and app name are required.')
+    if (!name.trim() || !appName.trim()) return setError('Client name and app name are required.')
     if (d && !isValidDomain(d)) return setError('Enter a domain like admin.clientname.com (no https://).')
     if (!isValidHexColor(color)) return setError('Pick a colour like #2b5fe8.')
     setBusy(true)
@@ -44,7 +44,7 @@ export function CreateTenantDrawer({ open, onClose }: { open: boolean; onClose: 
       })
       reset()
       onClose()
-      navigate(`/tenants/${tenant.id}`)
+      navigate(`/clients/${tenant.id}`)
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -56,26 +56,26 @@ export function CreateTenantDrawer({ open, onClose }: { open: boolean; onClose: 
     <Drawer
       open={open}
       onClose={onClose}
-      title="Add Tenant"
+      title="Add Client"
       footer={
         <>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" form="create-tenant" disabled={busy}>
-            {busy ? 'Creating…' : 'Create Tenant'}
+            {busy ? 'Creating…' : 'Create Client'}
           </Button>
         </>
       }
     >
       <p className="mb-5 text-sm text-gray-600">
-        Creates the tenant with starter roles and adds you as Tech Support Team. You can upload the logo, set modules
+        Creates the client with starter roles and adds you as Tech Support Team. You can upload the logo, set modules
         and more domains on the next screen.
       </p>
       <form id="create-tenant" onSubmit={onSubmit} className="space-y-5">
         <div>
           <Label htmlFor="t-name" required>
-            Tenant name
+            Client name
           </Label>
           <TextInput id="t-name" placeholder="e.g. Viral" value={name} onChange={(e) => setName(e.target.value)} />
           <p className="mt-1 text-xs text-gray-500">Your name for this client. Only you see it.</p>
@@ -91,7 +91,7 @@ export function CreateTenantDrawer({ open, onClose }: { open: boolean; onClose: 
             onChange={(e) => setAppName(e.target.value)}
           />
           <p className="mt-1 text-xs text-gray-500">
-            Shown to the tenant&apos;s users on their login page and sidebar.
+            Shown to the client&apos;s users on their login page and sidebar.
           </p>
         </div>
         <div>

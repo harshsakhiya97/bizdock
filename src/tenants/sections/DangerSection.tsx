@@ -20,7 +20,7 @@ export function DangerSection({ tenant }: { tenant: TenantRow }) {
     setError(null)
     try {
       await deleteTenant(tenant)
-      navigate('/tenants', { replace: true })
+      navigate('/clients', { replace: true })
     } catch (err) {
       setError((err as Error).message)
       setBusy(false)
@@ -29,11 +29,11 @@ export function DangerSection({ tenant }: { tenant: TenantRow }) {
 
   return (
     <div className="max-w-[560px]">
-      <SectionHeader title="Delete tenant" description="Permanently remove this tenant and everything in it." />
+      <SectionHeader title="Delete client" description="Permanently remove this client and everything in it." />
       <div className="rounded-xl border border-red-200 bg-red-50 p-5">
         <p className="text-sm text-red-800">
           This deletes <strong>{tenant.app_name}</strong>: its businesses, roles, team memberships, domains, logo and
-          all of its data. Its users&apos; logins stay (they may belong to other tenants). This can&apos;t be undone.
+          all of its data. Its users&apos; logins stay (they may belong to other clients). This can&apos;t be undone.
         </p>
         <label htmlFor="confirm-name" className="mt-4 mb-1.5 block text-sm font-semibold text-gray-900">
           Type <span className="font-mono">{tenant.name}</span> to confirm
@@ -47,7 +47,7 @@ export function DangerSection({ tenant }: { tenant: TenantRow }) {
         />
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
         <Button variant="danger" className="mt-4" disabled={!matches || busy} onClick={onDelete}>
-          <Trash2 /> {busy ? 'Deleting…' : 'Delete tenant'}
+          <Trash2 /> {busy ? 'Deleting…' : 'Delete client'}
         </Button>
       </div>
     </div>

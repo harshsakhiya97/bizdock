@@ -41,7 +41,7 @@ export function ModulesSection({ tenant, onSaved }: SectionProps) {
 
   return (
     <div className="max-w-[640px]">
-      <SectionHeader title="Modules" description="Choose which parts of the app this tenant gets." />
+      <SectionHeader title="Modules" description="Choose which parts of the app this client gets." />
 
       <div className="mb-3 flex items-center justify-between">
         <span className="text-sm text-gray-600">
@@ -91,7 +91,7 @@ export function ModulesSection({ tenant, onSaved }: SectionProps) {
       </ul>
 
       <p className="mt-3 text-xs text-gray-500">
-        This saves the choice. The tenant&apos;s panel will hide modules that are off as each module is built.
+        This saves the choice. The client&apos;s panel will hide modules that are off as each module is built.
       </p>
       <div className="mt-4 flex items-center gap-4">
         <Button variant="dark" onClick={save} disabled={busy || !changed}>

@@ -43,13 +43,13 @@ export function DatabaseSection({ tenant, onSaved }: SectionProps) {
 
   return (
     <div className="max-w-[560px]">
-      <SectionHeader title="Database" description="Where this tenant's data lives." />
+      <SectionHeader title="Database" description="Where this client's data lives." />
 
       <form onSubmit={onSubmit} className="space-y-5">
         <div className="grid gap-3 sm:grid-cols-2">
           {[
             { value: false, title: 'Shared BizDock database', text: 'Default. Data is kept apart by security rules.' },
-            { value: true, title: 'Own Supabase project', text: 'The tenant’s panel connects to a separate project.' },
+            { value: true, title: 'Own Supabase project', text: 'The client’s panel connects to a separate project.' },
           ].map((o) => (
             <button
               key={String(o.value)}
@@ -100,8 +100,8 @@ export function DatabaseSection({ tenant, onSaved }: SectionProps) {
               </p>
             </div>
             <div className="rounded-xl bg-amber-50 p-4 text-sm text-amber-800">
-              Switching moves where the tenant&apos;s panel reads and writes. The other project must already have the
-              same tables and the tenant&apos;s users; data isn&apos;t copied automatically.
+              Switching moves where the client&apos;s panel reads and writes. The other project must already have the
+              same tables and the client&apos;s users; data isn&apos;t copied automatically.
             </div>
           </>
         )}

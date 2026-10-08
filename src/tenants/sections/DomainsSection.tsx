@@ -53,7 +53,7 @@ export function DomainsSection({ tenant }: { tenant: TenantRow }) {
     <div className="max-w-[640px]">
       <SectionHeader
         title="Domains"
-        description="Addresses that open this tenant's panel: a bizdock.in subdomain or the client's own domain."
+        description="Addresses that open this client's panel: a bizdock.in subdomain or their own domain."
       />
 
       <form onSubmit={onAdd} className="mb-5 flex gap-2">
@@ -120,7 +120,7 @@ export function DomainsSection({ tenant }: { tenant: TenantRow }) {
       <Modal open={!!confirmRemove} onClose={() => setConfirmRemove(null)}>
         <h2 className="text-lg font-bold">Remove domain?</h2>
         <p className="mt-1 text-sm text-gray-600">
-          <strong>{confirmRemove?.domain}</strong> will stop opening this tenant&apos;s panel.
+          <strong>{confirmRemove?.domain}</strong> will stop opening this client&apos;s panel.
           {confirmRemove?.is_primary && ' It is the primary domain; pick another one as primary afterwards.'}
         </p>
         <div className="mt-6 grid grid-cols-2 gap-3">

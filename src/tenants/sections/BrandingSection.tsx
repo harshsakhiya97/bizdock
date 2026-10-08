@@ -38,7 +38,7 @@ export function BrandingSection({ tenant, onSaved }: SectionProps) {
 
   return (
     <div className="max-w-[560px]">
-      <SectionHeader title="Branding" description="What the tenant's users see: logo, favicon and theme colour." />
+      <SectionHeader title="Branding" description="What the client's users see: logo, favicon and theme colour." />
 
       {/* live preview */}
       <div className="mb-6 flex items-center gap-4 rounded-xl border border-gray-200 p-4">

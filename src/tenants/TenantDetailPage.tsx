@@ -18,7 +18,7 @@ const sections = [
   { id: 'domains', label: 'Domains' },
   { id: 'modules', label: 'Modules' },
   { id: 'database', label: 'Database' },
-  { id: 'delete', label: 'Delete tenant' },
+  { id: 'delete', label: 'Delete client' },
 ] as const
 type SectionId = (typeof sections)[number]['id']
 
@@ -37,12 +37,12 @@ export function TenantDetailPage() {
   useEffect(load, [load])
 
   if (error) return <p className="text-sm text-red-600">{error}</p>
-  if (tenant === undefined) return <p className="text-sm text-gray-500">Loading tenant…</p>
+  if (tenant === undefined) return <p className="text-sm text-gray-500">Loading client…</p>
   if (tenant === null)
     return (
       <div>
-        <p className="text-sm text-gray-600">This tenant doesn&apos;t exist (it may have been deleted).</p>
-        <Link to="/tenants" className="mt-2 inline-block text-sm font-semibold text-brand">
+        <p className="text-sm text-gray-600">This client doesn&apos;t exist (it may have been deleted).</p>
+        <Link to="/clients" className="mt-2 inline-block text-sm font-semibold text-brand">
           Back to tenants
         </Link>
       </div>
@@ -52,8 +52,8 @@ export function TenantDetailPage() {
 
   return (
     <div>
-      <Link to="/tenants" className="inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand">
-        <ArrowLeft className="size-4" /> All tenants
+      <Link to="/clients" className="inline-flex items-center gap-1.5 text-sm text-gray-600 hover:text-brand">
+        <ArrowLeft className="size-4" /> All clients
       </Link>
       <div className="mt-3 mb-5 flex items-center gap-3">
         <TenantIcon tenant={tenant} size={44} />
@@ -68,7 +68,7 @@ export function TenantDetailPage() {
 
       <div className="flex min-h-[460px] overflow-hidden rounded-xl border border-gray-200 bg-white">
         <aside className="w-[200px] shrink-0 border-r border-gray-200 p-2.5">
-          <div className="px-2 pt-2 pb-3 text-[11px] font-bold tracking-wider text-brand uppercase">Tenant</div>
+          <div className="px-2 pt-2 pb-3 text-[11px] font-bold tracking-wider text-brand uppercase">Client</div>
           {sections.map((s) => (
             <button
               key={s.id}

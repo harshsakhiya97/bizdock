@@ -19,7 +19,7 @@ export function GeneralSection({ tenant, onSaved }: SectionProps) {
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setSaved(false)
-    if (!name.trim() || !appName.trim()) return setError('Tenant name and app name are required.')
+    if (!name.trim() || !appName.trim()) return setError('Client name and app name are required.')
     setBusy(true)
     setError(null)
     try {
@@ -51,11 +51,11 @@ export function GeneralSection({ tenant, onSaved }: SectionProps) {
 
   return (
     <div className="max-w-[520px]">
-      <SectionHeader title="General" description="Basic details, plan and whether the tenant's app is open." />
+      <SectionHeader title="General" description="Basic details, plan and whether the client's app is open." />
       <form onSubmit={onSubmit} className="space-y-5">
         <div>
           <Label htmlFor="g-name" required>
-            Tenant name
+            Client name
           </Label>
           <TextInput id="g-name" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
@@ -98,7 +98,7 @@ export function GeneralSection({ tenant, onSaved }: SectionProps) {
         </div>
 
         <div>
-          <span className="mb-1.5 block text-sm font-semibold">Tenant key</span>
+          <span className="mb-1.5 block text-sm font-semibold">Client key</span>
           <div className="flex items-center gap-2">
             <code className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm">
               {tenant.tenant_key}
@@ -108,7 +108,7 @@ export function GeneralSection({ tenant, onSaved }: SectionProps) {
             </Button>
           </div>
           <p className="mt-1.5 text-xs text-gray-500">
-            For local testing of the tenant&apos;s panel: set <code>VITE_TENANT_KEY</code> to this in its .env.local.
+            For local testing of the client&apos;s panel: set <code>VITE_TENANT_KEY</code> to this in its .env.local.
           </p>
         </div>
 

@@ -18,8 +18,8 @@ export default function App() {
           <Route element={<RequireAuth />}>
             <Route element={<AppLayout />}>
               <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/tenants" element={<TenantsPage />} />
-              <Route path="/tenants/:id" element={<TenantDetailPage />} />
+              <Route path="/clients" element={<TenantsPage />} />
+              <Route path="/clients/:id" element={<TenantDetailPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/whats-new" element={<WhatsNewPage />} />
             </Route>

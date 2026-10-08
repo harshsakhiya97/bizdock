@@ -9,8 +9,8 @@ function fail(error: { message: string } | null): asserts error is null {
 
 /** Turn common database errors into plain messages. */
 function friendly(message: string) {
-  if (message.includes('tenant_domains_domain_key')) return 'That domain is already used by a tenant.'
-  if (message.includes('tenant_domains_one_primary')) return 'This tenant already has a primary domain.'
+  if (message.includes('tenant_domains_domain_key')) return 'That domain is already used by a client.'
+  if (message.includes('tenant_domains_one_primary')) return 'This client already has a primary domain.'
   if (message.includes('tenant_domains_domain_check')) return 'Domains must be lowercase.'
   if (message.includes('tenants_registry_pair')) return 'Set both the Supabase URL and key, or leave both empty.'
   return message
