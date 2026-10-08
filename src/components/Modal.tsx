@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 export function Modal({ open, onClose, children }: { open: boolean; onClose: () => void; children: ReactNode }) {
   useEffect(() => {
@@ -9,7 +10,8 @@ export function Modal({ open, onClose, children }: { open: boolean; onClose: () 
   }, [open, onClose])
 
   if (!open) return null
-  return (
+  // Rendered into <body> so no parent (sticky sidebar, cards) can sit on top of it.
+  return createPortal(
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onMouseDown={onClose}>
       <div
         role="dialog"
@@ -19,6 +21,7 @@ export function Modal({ open, onClose, children }: { open: boolean; onClose: () 
       >
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
