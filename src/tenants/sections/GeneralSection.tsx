@@ -9,7 +9,6 @@ import { SaveStatus, SectionHeader, type SectionProps } from './shared'
 export function GeneralSection({ tenant, onSaved }: SectionProps) {
   const [name, setName] = useState(tenant.name)
   const [appName, setAppName] = useState(tenant.app_name)
-  const [plan, setPlan] = useState(tenant.plan ?? '')
   const [status, setStatus] = useState(tenant.status)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -27,7 +26,6 @@ export function GeneralSection({ tenant, onSaved }: SectionProps) {
         await updateTenant(tenant.id, {
           name: name.trim(),
           app_name: appName.trim(),
-          plan: plan.trim() || null,
           status,
         }),
       )
@@ -51,7 +49,7 @@ export function GeneralSection({ tenant, onSaved }: SectionProps) {
 
   return (
     <div className="max-w-[520px]">
-      <SectionHeader title="General" description="Basic details, plan and whether the client's app is open." />
+      <SectionHeader title="General" description="Basic details and whether the client's app is open." />
       <form onSubmit={onSubmit} className="space-y-5">
         <div>
           <Label htmlFor="g-name" required>
@@ -64,10 +62,6 @@ export function GeneralSection({ tenant, onSaved }: SectionProps) {
             App name
           </Label>
           <TextInput id="g-app" value={appName} onChange={(e) => setAppName(e.target.value)} />
-        </div>
-        <div>
-          <Label htmlFor="g-plan">Plan</Label>
-          <TextInput id="g-plan" placeholder="e.g. Starter" value={plan} onChange={(e) => setPlan(e.target.value)} />
         </div>
         <div>
           <span className="mb-1.5 block text-sm font-semibold">Status</span>

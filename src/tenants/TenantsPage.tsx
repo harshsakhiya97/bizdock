@@ -77,7 +77,6 @@ export function TenantsPage() {
                   <th className="px-4 py-2.5">Client</th>
                   <th className="px-4 py-2.5">Primary domain</th>
                   <th className="px-4 py-2.5">Businesses</th>
-                  <th className="px-4 py-2.5">Plan</th>
                   <th className="px-4 py-2.5">Status</th>
                   <th className="px-4 py-2.5">Created</th>
                 </tr>
@@ -103,7 +102,6 @@ export function TenantsPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-gray-700">{t.businesses[0]?.count ?? 0}</td>
-                      <td className="px-4 py-3 text-gray-700">{t.plan || '—'}</td>
                       <td className="px-4 py-3">
                         <StatusBadge status={t.status} />
                       </td>

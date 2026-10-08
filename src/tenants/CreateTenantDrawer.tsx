@@ -13,7 +13,6 @@ export function CreateTenantDrawer({ open, onClose }: { open: boolean; onClose: 
   const [appName, setAppName] = useState('')
   const [domain, setDomain] = useState('')
   const [color, setColor] = useState('#2b5fe8')
-  const [plan, setPlan] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -22,7 +21,6 @@ export function CreateTenantDrawer({ open, onClose }: { open: boolean; onClose: 
     setAppName('')
     setDomain('')
     setColor('#2b5fe8')
-    setPlan('')
     setError(null)
   }
 
@@ -39,7 +37,6 @@ export function CreateTenantDrawer({ open, onClose }: { open: boolean; onClose: 
         name: name.trim(),
         app_name: appName.trim(),
         primary_color: color,
-        plan: plan.trim() || null,
         domain: d || null,
       })
       reset()
@@ -105,10 +102,6 @@ export function CreateTenantDrawer({ open, onClose }: { open: boolean; onClose: 
           <p className="mt-1 text-xs text-gray-500">A subdomain of bizdock.in or the client&apos;s own domain.</p>
         </div>
         <ColorField id="t-color" label="Theme colour" value={color} onChange={setColor} />
-        <div>
-          <Label htmlFor="t-plan">Plan</Label>
-          <TextInput id="t-plan" placeholder="e.g. Starter" value={plan} onChange={(e) => setPlan(e.target.value)} />
-        </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
       </form>
     </Drawer>

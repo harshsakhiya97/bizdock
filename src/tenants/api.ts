@@ -35,7 +35,6 @@ export async function createTenant(input: {
   name: string
   app_name: string
   primary_color: string
-  plan: string | null
   domain: string | null
 }) {
   const { domain, ...fields } = input
