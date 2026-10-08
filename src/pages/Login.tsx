@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Navigate, useLocation, useNavigate } from 'react-router'
+import { Navigate, useLocation } from 'react-router'
 import { ArrowLeft, Lock, Mail } from 'lucide-react'
 import { useAuth } from '@/auth/useAuth'
 import { Label, PasswordInput, TextInput } from '@/components/Field'
@@ -11,8 +11,7 @@ import { supabase } from '@/lib/supabase'
 type Mode = 'login' | 'forgot'
 
 export function LoginPage() {
-  const { session, loading } = useAuth()
-  const navigate = useNavigate()
+  const { session, loading, accessError } = useAuth()
   const location = useLocation()
   const from = (location.state as { from?: string } | null)?.from ?? '/dashboard'
 
@@ -37,8 +36,8 @@ export function LoginPage() {
 
     if (mode === 'login') {
       const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
+      // on success the auth provider checks owner access, then <Navigate> below redirects
       if (error) setError(error.message)
-      else navigate(from, { replace: true })
     } else {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
         redirectTo: `${window.location.origin}/profile?tab=password`,
@@ -119,7 +118,7 @@ export function LoginPage() {
               </div>
             )}
 
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            {(error ?? accessError) && <p className="text-sm text-red-600">{error ?? accessError}</p>}
             {notice && <p className="text-sm text-gray-600">{notice}</p>}
 
             <button

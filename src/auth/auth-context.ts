@@ -6,14 +6,17 @@ export type Profile = {
   email: string | null
   full_name: string | null
   phone: string | null
-  role: 'admin' | 'staff'
 }
 
 export type AuthState = {
   session: Session | null
   user: User | null
   profile: Profile | null
+  /** true when this login is a BizDock platform owner */
+  isOwner: boolean
   loading: boolean
+  /** set when someone without owner access tried to log in */
+  accessError: string | null
   refreshProfile: () => Promise<void>
   signOut: () => Promise<void>
 }

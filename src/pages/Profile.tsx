@@ -54,13 +54,9 @@ function ProfileDetails() {
     ['Phone', profile?.phone || '—'],
     [
       'My Role',
-      profile ? (
-        <span key="role" className="rounded-full bg-brand-soft px-2.5 py-0.5 text-xs font-semibold text-brand capitalize">
-          {profile.role}
-        </span>
-      ) : (
-        '—'
-      ),
+      <span key="role" className="rounded-full bg-brand-soft px-2.5 py-0.5 text-xs font-semibold text-brand">
+        Owner
+      </span>,
     ],
   ]
 
