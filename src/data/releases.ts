@@ -9,7 +9,7 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
-    version: '1.0',
+    version: '0.1',
     date: '8 October 2026',
     title: 'Login, Dashboard, Profile and What’s New',
     summary: 'The first version of BizDock.',
