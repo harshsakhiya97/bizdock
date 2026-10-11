@@ -150,3 +150,24 @@ h1, h2, h3, h4, h5 { font-weight: 700; }
 .form-grid { row-gap: 10px; column-gap: 14px; }
 .form-section { gap: 10px; }
 .drawer-body form.stack, .modal-body form.stack { gap: 18px !important; }
+
+/* access matrix (roles × permissions) */
+.access-matrix td b { display: block; font-size: 13px; font-weight: 600; }
+.access-matrix td small { display: block; font-size: 11.5px; color: var(--text-muted); margin-top: 1px; line-height: 1.35; }
+.access-matrix .am-col { text-align: center; min-width: 120px; }
+.access-matrix th.am-col { vertical-align: bottom; white-space: normal; }
+.access-matrix .am-section td { background: var(--surface-muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); padding-top: 8px; padding-bottom: 8px; }
+.access-matrix tbody tr.am-section:hover { background: none; }
+.access-matrix .am-select { width: 96px; margin: 0 auto; }
+.access-matrix .am-check { width: 16px; height: 16px; accent-color: var(--brand); cursor: pointer; }
+.access-matrix .am-check:disabled, .access-matrix .am-select:disabled { cursor: not-allowed; opacity: .75; }
+.am-head { display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--text); }
+.am-head b { font-size: 13px; }
+.am-head small { font-size: 11px; color: var(--text-muted); font-weight: 500; }
+.am-head .btn { margin-top: 2px; }
+.scope-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* sidebar: the user card opens My Profile */
+.user-link { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; border-radius: var(--radius); }
+.user-link:hover b, .user-link.active b { color: var(--brand); }
+.sidebar.is-collapsed .user-link { flex: none; }
