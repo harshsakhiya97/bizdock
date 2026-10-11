@@ -1,12 +1,15 @@
-import { cn } from '@/lib/cn'
+const initials = (name = '') =>
+  name
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join('')
 
-export function Avatar({ name, size = 32, className }: { name: string; size?: number; className?: string }) {
+export function Avatar({ name, size = 32 }: { name: string; size?: number }) {
   return (
-    <div
-      className={cn('grid shrink-0 place-items-center rounded-full bg-brand-soft font-bold text-gray-900', className)}
-      style={{ width: size, height: size, fontSize: size * 0.4 }}
-    >
-      {name.charAt(0).toUpperCase()}
+    <div className="avatar" style={{ width: size, height: size, fontSize: size * 0.36 }}>
+      {initials(name)}
     </div>
   )
 }

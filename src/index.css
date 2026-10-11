@@ -1,27 +1,17 @@
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
 
-/* BizDock theme — same structure as Muzic Lover, colors from the BizDock icon */
-@theme {
-  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+/* Theme kit (Muzic Lover structure, BizDock colours). */
+@import "./styles/theme.css" layer(components);
+@import "./styles/app.css" layer(components);
 
-  --color-brand: #2b5fe8;        /* primary blue (was Muzic Lover red) */
-  --color-brand-hover: #2352d1;
-  --color-brand-light: #3fb2fb;  /* the lighter "Dock" blue */
-  --color-brand-soft: #e8effd;   /* selected tab / avatar / badge background (was cream) */
-  --color-brand-muted: #93b0f5;  /* disabled primary button */
-  --color-navy: #0b1229;         /* dark buttons + icon background */
-  --color-navy-hover: #1b2440;
-  --color-canvas: #eef3fc;       /* login panel + splash background */
-  --color-grid: #dbe5f7;         /* login panel grid lines */
-}
-
-html,
-body,
-#root {
-  min-height: 100%;
-}
-
-body {
-  @apply bg-white font-sans text-gray-900 antialiased;
+/* Tailwind utilities read the same tokens */
+@theme inline {
+  --font-sans: var(--font);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-soft: var(--brand-soft);
+  --color-ink: var(--ink);
+  --color-muted: var(--text-muted);
+  --color-line: var(--line);
 }

@@ -1,19 +1,23 @@
 export type Release = {
   version: string
+  /** ISO date, e.g. 2026-10-08 */
   date: string
   title: string
-  summary: string
-  added: string[]
+  summary?: string
+  new?: string[]
+  improved?: string[]
+  fixed?: string[]
+  removed?: string[]
 }
 
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
     version: '0.1',
-    date: '8 October 2026',
+    date: '2026-10-08',
     title: 'Login, Dashboard, Profile and What’s New',
     summary: 'The first version of BizDock.',
-    added: [
+    new: [
       'Login with email and password, plus “Forgot Password?” to get a reset link by email.',
       'Dashboard with a welcome message and stat cards for Leads, Follow-ups, Payments and Profit (numbers come later).',
       'My Profile: see your name, email, phone and role, edit your name and phone, and reset your password.',

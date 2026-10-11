@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Button } from '@/components/Button'
-import { cn } from '@/lib/cn'
+import { Hint } from '@/components/Field'
 import { updateTenant } from '../api'
 import { MODULES } from '../types'
 import { SaveStatus, SectionHeader, type SectionProps } from './shared'
@@ -40,65 +40,48 @@ export function ModulesSection({ tenant, onSaved }: SectionProps) {
   }
 
   return (
-    <div className="max-w-[640px]">
+    <>
       <SectionHeader title="Modules" description="Choose which parts of the app this client gets." />
 
-      <div className="mb-3 flex items-center justify-between">
-        <span className="text-sm text-gray-600">
-          {enabled.size} of {MODULES.length} enabled
-        </span>
-        <button
-          type="button"
-          onClick={() => {
-            setSaved(false)
-            setEnabled(allOn ? new Set() : new Set(MODULES.map((m) => m.key)))
-          }}
-          className="text-sm font-semibold text-brand hover:underline"
-        >
-          {allOn ? 'Turn all off' : 'Turn all on'}
-        </button>
-      </div>
+      <div className="stack" style={{ maxWidth: 640, gap: 12 }}>
+        <div className="row-between">
+          <span className="muted">
+            {enabled.size} of {MODULES.length} enabled
+          </span>
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => {
+              setSaved(false)
+              setEnabled(allOn ? new Set() : new Set(MODULES.map((m) => m.key)))
+            }}
+          >
+            {allOn ? 'Turn all off' : 'Turn all on'}
+          </button>
+        </div>
 
-      <ul className="divide-y divide-gray-100 rounded-xl border border-gray-200">
-        {MODULES.map((m) => {
-          const on = enabled.has(m.key)
-          return (
-            <li key={m.key}>
-              <label className="flex cursor-pointer items-center justify-between gap-4 px-4 py-3 hover:bg-gray-50">
-                <div>
-                  <div className="text-sm font-medium">{m.label}</div>
-                  <div className="text-xs text-gray-500">{m.description}</div>
-                </div>
-                <input type="checkbox" className="peer sr-only" checked={on} onChange={() => toggle(m.key)} />
-                <span
-                  aria-hidden
-                  className={cn(
-                    'relative h-6 w-11 shrink-0 rounded-full transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-brand/40',
-                    on ? 'bg-brand' : 'bg-gray-300',
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow transition-transform',
-                      on && 'translate-x-5',
-                    )}
-                  />
+        <div className="link-rows">
+          {MODULES.map((m) => (
+            <label key={m.key}>
+              <span className="check">
+                <input type="checkbox" checked={enabled.has(m.key)} onChange={() => toggle(m.key)} />
+                <span>
+                  <b>{m.label}</b>
+                  <small>{m.description}</small>
                 </span>
-              </label>
-            </li>
-          )
-        })}
-      </ul>
+              </span>
+            </label>
+          ))}
+        </div>
 
-      <p className="mt-3 text-xs text-gray-500">
-        This saves the choice. The client&apos;s panel will hide modules that are off as each module is built.
-      </p>
-      <div className="mt-4 flex items-center gap-4">
-        <Button variant="dark" onClick={save} disabled={busy || !changed}>
-          {busy ? 'Saving…' : 'Save modules'}
-        </Button>
-        <SaveStatus error={error} saved={saved} />
+        <Hint>This saves the choice. The client&apos;s panel will hide modules that are off as each module is built.</Hint>
+        <div className="row">
+          <Button variant="dark" onClick={save} disabled={busy || !changed}>
+            {busy ? 'Saving…' : 'Save modules'}
+          </Button>
+          <SaveStatus error={error} saved={saved} />
+        </div>
       </div>
-    </div>
+    </>
   )
 }

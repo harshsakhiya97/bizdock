@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { Button } from '@/components/Button'
-import { Label, TextInput } from '@/components/Field'
+import { Hint, Label, TextInput } from '@/components/Field'
 import { cn } from '@/lib/cn'
 import { updateTenant } from '../api'
 import { SaveStatus, SectionHeader, type SectionProps } from './shared'
@@ -48,9 +48,9 @@ export function GeneralSection({ tenant, onSaved }: SectionProps) {
   }
 
   return (
-    <div className="max-w-[520px]">
+    <>
       <SectionHeader title="General" description="Basic details and whether the client's app is open." />
-      <form onSubmit={onSubmit} className="space-y-5">
+      <form onSubmit={onSubmit} className="stack" style={{ maxWidth: 520 }}>
         <div>
           <Label htmlFor="g-name" required>
             Client name
@@ -64,53 +64,41 @@ export function GeneralSection({ tenant, onSaved }: SectionProps) {
           <TextInput id="g-app" value={appName} onChange={(e) => setAppName(e.target.value)} />
         </div>
         <div>
-          <span className="mb-1.5 block text-sm font-semibold">Status</span>
-          <div className="inline-flex rounded-lg border border-gray-300 p-1">
+          <span className="field-label">Status</span>
+          <div className="seg">
             {(['active', 'suspended'] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatus(s)}
-                className={cn(
-                  'rounded-md px-4 py-1.5 text-sm font-medium',
-                  status === s
-                    ? s === 'active'
-                      ? 'bg-emerald-50 text-emerald-700'
-                      : 'bg-amber-50 text-amber-700'
-                    : 'text-gray-600 hover:bg-gray-50',
-                )}
-              >
+              <button key={s} type="button" className={cn(status === s && 'is-active')} onClick={() => setStatus(s)}>
                 {s === 'active' ? 'Active' : 'Suspended'}
               </button>
             ))}
           </div>
           {status === 'suspended' && (
-            <p className="mt-1.5 text-xs text-amber-700">
-              Suspended tenants see &ldquo;Workspace not found&rdquo; and can&apos;t log in.
-            </p>
+            <Hint>Suspended clients see &ldquo;Workspace not found&rdquo; and can&apos;t log in.</Hint>
           )}
         </div>
 
         <div>
-          <span className="mb-1.5 block text-sm font-semibold">Client key</span>
-          <div className="flex items-center gap-2">
-            <code className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm">
+          <span className="field-label">Client key</span>
+          <div className="row">
+            <span className="code-chip" style={{ height: 34, padding: '0 10px', fontSize: 12.5 }}>
               {tenant.tenant_key}
-            </code>
-            <Button type="button" variant="outline" onClick={copyKey}>
+            </span>
+            <Button variant="outline" size="sm" onClick={copyKey}>
               {copied ? <Check /> : <Copy />} {copied ? 'Copied' : 'Copy'}
             </Button>
           </div>
-          <p className="mt-1.5 text-xs text-gray-500">
+          <Hint>
             For local testing of the client&apos;s panel: set <code>VITE_TENANT_KEY</code> to this in its .env.local.
-          </p>
+          </Hint>
         </div>
 
         <SaveStatus error={error} saved={saved} />
-        <Button type="submit" variant="dark" disabled={busy}>
-          {busy ? 'Saving…' : 'Save changes'}
-        </Button>
+        <div>
+          <Button type="submit" variant="dark" disabled={busy}>
+            {busy ? 'Saving…' : 'Save changes'}
+          </Button>
+        </div>
       </form>
-    </div>
+    </>
   )
 }

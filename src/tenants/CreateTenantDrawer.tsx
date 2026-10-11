@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { Button } from '@/components/Button'
 import { Drawer } from '@/components/Drawer'
-import { Label, TextInput } from '@/components/Field'
+import { Hint, Label, TextInput } from '@/components/Field'
 import { createTenant } from './api'
 import { ColorField } from './ColorField'
 import { isValidDomain, isValidHexColor } from './types'
@@ -59,23 +59,26 @@ export function CreateTenantDrawer({ open, onClose }: { open: boolean; onClose: 
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" form="create-tenant" disabled={busy}>
-            {busy ? 'Creating…' : 'Create Client'}
-          </Button>
+          <div className="foot-end">
+            {error && <p className="err-text">{error}</p>}
+            <Button type="submit" form="create-tenant" disabled={busy}>
+              {busy ? 'Creating…' : 'Create Client'}
+            </Button>
+          </div>
         </>
       }
     >
-      <p className="mb-5 text-sm text-gray-600">
+      <div className="note">
         Creates the client with starter roles and adds you as Tech Support Team. You can upload the logo, set modules
         and more domains on the next screen.
-      </p>
-      <form id="create-tenant" onSubmit={onSubmit} className="space-y-5">
+      </div>
+      <form id="create-tenant" onSubmit={onSubmit} className="form-grid">
         <div>
           <Label htmlFor="t-name" required>
             Client name
           </Label>
           <TextInput id="t-name" placeholder="e.g. Viral" value={name} onChange={(e) => setName(e.target.value)} />
-          <p className="mt-1 text-xs text-gray-500">Your name for this client. Only you see it.</p>
+          <Hint>Your name for this client. Only you see it.</Hint>
         </div>
         <div>
           <Label htmlFor="t-app" required>
@@ -87,9 +90,7 @@ export function CreateTenantDrawer({ open, onClose }: { open: boolean; onClose: 
             value={appName}
             onChange={(e) => setAppName(e.target.value)}
           />
-          <p className="mt-1 text-xs text-gray-500">
-            Shown to the client&apos;s users on their login page and sidebar.
-          </p>
+          <Hint>Shown to the client&apos;s users on their login page and sidebar.</Hint>
         </div>
         <div>
           <Label htmlFor="t-domain">Primary domain</Label>
@@ -99,10 +100,9 @@ export function CreateTenantDrawer({ open, onClose }: { open: boolean; onClose: 
             value={domain}
             onChange={(e) => setDomain(e.target.value)}
           />
-          <p className="mt-1 text-xs text-gray-500">A subdomain of bizdock.in or the client&apos;s own domain.</p>
+          <Hint>A subdomain of bizdock.in or the client&apos;s own domain.</Hint>
         </div>
         <ColorField id="t-color" label="Theme colour" value={color} onChange={setColor} />
-        {error && <p className="text-sm text-red-600">{error}</p>}
       </form>
     </Drawer>
   )

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { ImageUp, Trash2 } from 'lucide-react'
 import { Button } from '@/components/Button'
+import { Hint } from '@/components/Field'
 import { removeBranding, updateTenant, uploadBranding } from '../api'
 import { ColorField } from '../ColorField'
 import { TenantIcon } from '../TenantBadges'
@@ -37,40 +38,41 @@ export function BrandingSection({ tenant, onSaved }: SectionProps) {
   const preview = { ...tenant, primary_color: isValidHexColor(color) ? color : tenant.primary_color }
 
   return (
-    <div className="max-w-[560px]">
+    <>
       <SectionHeader title="Branding" description="What the client's users see: logo, favicon and theme colour." />
 
-      {/* live preview */}
-      <div className="mb-6 flex items-center gap-4 rounded-xl border border-gray-200 p-4">
-        <TenantIcon tenant={preview} size={56} />
-        <div className="flex-1">
-          <div className="font-extrabold tracking-tight uppercase">{tenant.app_name}</div>
-          <div className="mt-2 flex gap-2">
-            <span
-              className="rounded-md px-3 py-1.5 text-xs font-semibold text-white"
-              style={{ background: preview.primary_color }}
-            >
-              Primary button
-            </span>
-            <span
-              className="rounded-md px-3 py-1.5 text-xs font-semibold"
-              style={{
-                color: preview.primary_color,
-                background: `color-mix(in oklab, ${preview.primary_color} 10%, white)`,
-              }}
-            >
-              Selected tab
-            </span>
+      <div className="stack" style={{ maxWidth: 560 }}>
+        {/* live preview */}
+        <div className="posting-head" style={{ justifyContent: 'flex-start', gap: 14 }}>
+          <TenantIcon tenant={preview} size={52} />
+          <div className="stack" style={{ gap: 8 }}>
+            <div className="brand-name">{tenant.app_name}</div>
+            <div className="row" style={{ gap: 8 }}>
+              <span className="btn btn-sm" style={{ background: preview.primary_color, color: '#fff', cursor: 'default' }}>
+                Primary button
+              </span>
+              <span
+                className="tab is-active"
+                style={{
+                  color: preview.primary_color,
+                  borderColor: preview.primary_color,
+                  background: `color-mix(in oklab, ${preview.primary_color} 9%, white)`,
+                  cursor: 'default',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                }}
+              >
+                Selected tab
+              </span>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="space-y-6">
         <div>
           <ColorField id="b-color" label="Theme colour" value={color} onChange={setColor} />
           <Button
-            className="mt-3"
             variant="dark"
+            style={{ marginTop: 12 }}
             onClick={saveColor}
             disabled={busy !== null || color === tenant.primary_color}
           >
@@ -101,7 +103,7 @@ export function BrandingSection({ tenant, onSaved }: SectionProps) {
 
         <SaveStatus error={error} saved={saved} />
       </div>
-    </div>
+    </>
   )
 }
 
@@ -127,21 +129,15 @@ function ImageField({
   const input = useRef<HTMLInputElement>(null)
   return (
     <div>
-      <span className="mb-1.5 block text-sm font-semibold">{label}</span>
-      <div className="flex items-center gap-4">
-        <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl border border-dashed border-gray-300 bg-gray-50">
-          {url ? (
-            <img src={url} alt="" className="size-full object-contain" />
-          ) : (
-            <ImageUp className="size-5 text-gray-400" />
-          )}
-        </div>
-        <div className="flex gap-2">
+      <span className="field-label">{label}</span>
+      <div className="upload">
+        <div className="upload-box">{url ? <img src={url} alt="" /> : <ImageUp size={20} />}</div>
+        <div className="row" style={{ gap: 8 }}>
           <input
             ref={input}
             type="file"
             accept="image/png,image/jpeg,image/webp,image/svg+xml,image/x-icon,.ico"
-            className="hidden"
+            hidden
             onChange={(e) => {
               const file = e.target.files?.[0]
               e.target.value = ''
@@ -150,17 +146,17 @@ function ImageField({
               onPick(file)
             }}
           />
-          <Button variant="outline" onClick={() => input.current?.click()} disabled={disabled}>
+          <Button variant="outline" size="sm" onClick={() => input.current?.click()} disabled={disabled}>
             <ImageUp /> {busy ? 'Uploading…' : url ? 'Replace' : 'Upload'}
           </Button>
           {url && (
-            <Button variant="ghost" onClick={onRemove} disabled={disabled} className="text-red-600">
+            <Button variant="ghost" size="sm" onClick={onRemove} disabled={disabled} className="danger-text">
               <Trash2 /> Remove
             </Button>
           )}
         </div>
       </div>
-      <p className="mt-1.5 text-xs text-gray-500">{hint}</p>
+      <Hint>{hint}</Hint>
     </div>
   )
 }

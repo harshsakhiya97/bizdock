@@ -16,15 +16,16 @@ export function ColorField({
       <Label htmlFor={id} required>
         {label}
       </Label>
-      <div className="flex items-center gap-3">
+      <div className="row" style={{ flexWrap: 'nowrap' }}>
         <input
           type="color"
           aria-label={`${label} picker`}
           value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000'}
           onChange={(e) => onChange(e.target.value)}
-          className="h-11 w-14 shrink-0 cursor-pointer rounded-lg border border-gray-300 bg-white p-1"
+          className="input"
+          style={{ width: 56, padding: 4, cursor: 'pointer', flexShrink: 0 }}
         />
-        <TextInput id={id} value={value} onChange={(e) => onChange(e.target.value.trim())} className="font-mono" />
+        <TextInput id={id} value={value} onChange={(e) => onChange(e.target.value.trim())} className="input-mono" />
       </div>
     </div>
   )

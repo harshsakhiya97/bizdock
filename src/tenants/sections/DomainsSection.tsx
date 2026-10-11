@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Globe, Plus, Star, Trash2 } from 'lucide-react'
 import { Button } from '@/components/Button'
 import { TextInput } from '@/components/Field'
-import { Modal } from '@/components/Modal'
+import { ConfirmModal } from '@/components/ui'
 import { addDomain, listDomains, removeDomain, setPrimaryDomain } from '../api'
 import { isValidDomain, type DomainRow, type TenantRow } from '../types'
 import { SectionHeader } from './shared'
@@ -50,14 +50,14 @@ export function DomainsSection({ tenant }: { tenant: TenantRow }) {
   }
 
   return (
-    <div className="max-w-[640px]">
+    <>
       <SectionHeader
         title="Domains"
         description="Addresses that open this client's panel: a bizdock.in subdomain or their own domain."
       />
 
-      <form onSubmit={onAdd} className="mb-5 flex gap-2">
-        <div className="flex-1">
+      <div className="stack" style={{ maxWidth: 640 }}>
+        <form onSubmit={onAdd} className="row" style={{ flexWrap: 'nowrap' }}>
           <TextInput
             aria-label="New domain"
             placeholder="e.g. admin.viralsakhiya.com or viral.bizdock.in"
@@ -65,80 +65,81 @@ export function DomainsSection({ tenant }: { tenant: TenantRow }) {
             onChange={(e) => setValue(e.target.value)}
             icon={<Globe />}
           />
+          <Button type="submit" disabled={busy || !value.trim()} style={{ height: 40 }}>
+            <Plus /> Add domain
+          </Button>
+        </form>
+        {error && <div className="alert alert-error">{error}</div>}
+
+        {!domains ? (
+          <div className="muted small">Loading…</div>
+        ) : domains.length === 0 ? (
+          <div className="empty-box">
+            No domains yet. Without one, this client can only be opened locally with its client key.
+          </div>
+        ) : (
+          <div className="link-rows">
+            {domains.map((d) => (
+              <div key={d.id}>
+                <div className="lr-title">
+                  <Globe size={15} className="muted" />
+                  <span className="cell-clip">{d.domain}</span>
+                  {d.is_primary && <span className="badge badge-brand">Primary</span>}
+                </div>
+                <div className="row-actions">
+                  {!d.is_primary && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => act(() => setPrimaryDomain(tenant.id, d.id))}
+                    >
+                      <Star /> Make primary
+                    </Button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-icon danger-text"
+                    disabled={busy}
+                    title="Remove"
+                    aria-label={`Remove ${d.domain}`}
+                    onClick={() => setConfirmRemove(d)}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="note">
+          <b>DNS setup (once hosting is chosen)</b>
+          Point each domain at the client panel&apos;s hosting with a <strong>CNAME</strong> record, and add it to the
+          hosting&apos;s custom domains so SSL is issued. Until then, domains here only decide which client a domain
+          opens.
         </div>
-        <Button type="submit" disabled={busy || !value.trim()} className="h-11">
-          <Plus /> Add domain
-        </Button>
-      </form>
-      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
-
-      {!domains ? (
-        <p className="text-sm text-gray-500">Loading…</p>
-      ) : domains.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-500">
-          No domains yet. Without one, this tenant can only be opened locally with its tenant key.
-        </p>
-      ) : (
-        <ul className="divide-y divide-gray-100 rounded-xl border border-gray-200">
-          {domains.map((d) => (
-            <li key={d.id} className="flex items-center justify-between gap-3 px-4 py-3">
-              <div className="flex min-w-0 items-center gap-2.5">
-                <Globe className="size-4 shrink-0 text-gray-400" />
-                <span className="truncate text-sm font-medium">{d.domain}</span>
-                {d.is_primary && (
-                  <span className="rounded-md bg-brand-soft px-2 py-0.5 text-xs font-semibold text-brand">Primary</span>
-                )}
-              </div>
-              <div className="flex shrink-0 gap-1">
-                {!d.is_primary && (
-                  <Button variant="ghost" disabled={busy} onClick={() => act(() => setPrimaryDomain(tenant.id, d.id))}>
-                    <Star /> Make primary
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  disabled={busy}
-                  className="text-red-600"
-                  onClick={() => setConfirmRemove(d)}
-                  aria-label={`Remove ${d.domain}`}
-                >
-                  <Trash2 />
-                </Button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <div className="mt-6 rounded-xl bg-gray-50 p-4 text-sm text-gray-700">
-        <div className="mb-1 font-semibold">DNS setup (once hosting is chosen)</div>
-        Point each domain at the tenant panel&apos;s hosting with a <strong>CNAME</strong> record, and add it to the
-        hosting&apos;s custom domains so SSL is issued. Until then, domains here only decide which tenant a domain
-        opens.
       </div>
 
-      <Modal open={!!confirmRemove} onClose={() => setConfirmRemove(null)}>
-        <h2 className="text-lg font-bold">Remove domain?</h2>
-        <p className="mt-1 text-sm text-gray-600">
-          <strong>{confirmRemove?.domain}</strong> will stop opening this client&apos;s panel.
-          {confirmRemove?.is_primary && ' It is the primary domain; pick another one as primary afterwards.'}
-        </p>
-        <div className="mt-6 grid grid-cols-2 gap-3">
-          <Button variant="outline" onClick={() => setConfirmRemove(null)}>
-            Cancel
-          </Button>
-          <Button
-            variant="danger"
-            onClick={() => {
-              const d = confirmRemove
-              setConfirmRemove(null)
-              if (d) void act(() => removeDomain(d.id))
-            }}
-          >
-            Remove
-          </Button>
-        </div>
-      </Modal>
-    </div>
+      <ConfirmModal
+        open={!!confirmRemove}
+        icon={Trash2}
+        danger
+        title="Remove domain?"
+        message={
+          <>
+            <strong>{confirmRemove?.domain}</strong> will stop opening this client&apos;s panel.
+            {confirmRemove?.is_primary && ' It is the primary domain; pick another one as primary afterwards.'}
+          </>
+        }
+        confirmLabel="Remove"
+        onCancel={() => setConfirmRemove(null)}
+        onConfirm={() => {
+          const d = confirmRemove
+          setConfirmRemove(null)
+          if (d) void act(() => removeDomain(d.id))
+        }}
+      />
+    </>
   )
 }

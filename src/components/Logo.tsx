@@ -1,6 +1,7 @@
 import logoMark from '@/assets/logo-mark.png'
 import { cn } from '@/lib/cn'
 
+/** The BizDock app icon (kept as is). */
 export function LogoMark({ size = 34, className }: { size?: number; className?: string }) {
   return (
     <img
@@ -8,22 +9,20 @@ export function LogoMark({ size = 34, className }: { size?: number; className?: 
       alt="BizDock"
       width={size}
       height={size}
-      className={cn('shrink-0 rounded-[22%] bg-navy', className)}
-      style={{ width: size, height: size }}
+      className={cn('logo-img', className)}
+      style={{ width: size, height: size, background: 'var(--ink)' }}
     />
   )
 }
 
-/** Mark + "BIZDOCK" wordmark, like the Muzic Lover sidebar header. */
-export function LogoLockup({ size = 34, tagline = true }: { size?: number; tagline?: boolean }) {
+/** Theme-kit brand lockup: mark + "BIZDOCK" with the tagline under it. */
+export function LogoLockup() {
   return (
-    <div className="flex items-center gap-2.5">
-      <LogoMark size={size} />
-      <div className="leading-none">
-        <div className="text-[15px] font-extrabold tracking-tight text-gray-900">BIZDOCK</div>
-        {tagline && (
-          <div className="mt-1 text-[9px] font-bold tracking-[0.2em] text-brand">BUSINESS SUITE</div>
-        )}
+    <div className="brand-lockup">
+      <LogoMark size={34} />
+      <div className="brand-name">
+        BizDock
+        <span>Business Suite</span>
       </div>
     </div>
   )

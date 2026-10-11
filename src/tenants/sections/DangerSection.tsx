@@ -28,28 +28,26 @@ export function DangerSection({ tenant }: { tenant: TenantRow }) {
   }
 
   return (
-    <div className="max-w-[560px]">
+    <>
       <SectionHeader title="Delete client" description="Permanently remove this client and everything in it." />
-      <div className="rounded-xl border border-red-200 bg-red-50 p-5">
-        <p className="text-sm text-red-800">
+      <div className="alert-danger-box" style={{ maxWidth: 560 }}>
+        <p>
           This deletes <strong>{tenant.app_name}</strong>: its businesses, roles, team memberships, domains, logo and
           all of its data. Its users&apos; logins stay (they may belong to other clients). This can&apos;t be undone.
         </p>
-        <label htmlFor="confirm-name" className="mt-4 mb-1.5 block text-sm font-semibold text-gray-900">
-          Type <span className="font-mono">{tenant.name}</span> to confirm
-        </label>
-        <TextInput
-          id="confirm-name"
-          autoComplete="off"
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          className="bg-white"
-        />
-        {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-        <Button variant="danger" className="mt-4" disabled={!matches || busy} onClick={onDelete}>
-          <Trash2 /> {busy ? 'Deleting…' : 'Delete client'}
-        </Button>
+        <div>
+          <label htmlFor="confirm-name" className="field-label">
+            Type <span className="input-mono">{tenant.name}</span> to confirm
+          </label>
+          <TextInput id="confirm-name" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
+        </div>
+        {error && <div className="alert alert-error">{error}</div>}
+        <div>
+          <Button variant="danger" disabled={!matches || busy} onClick={onDelete}>
+            <Trash2 /> {busy ? 'Deleting…' : 'Delete client'}
+          </Button>
+        </div>
       </div>
-    </div>
+    </>
   )
 }

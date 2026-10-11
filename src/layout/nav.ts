@@ -23,3 +23,10 @@ export function metaFor(pathname: string): Meta {
   if (pathname.startsWith('/clients/')) return { title: 'Clients', crumb: 'Client details', icon: Building2 }
   return pageMeta['/dashboard']
 }
+
+/** Phone tab bar: short names for the main pages. */
+export const tabNames: Record<string, string> = {
+  '/dashboard': 'Dashboard',
+  '/clients': 'Clients',
+  '/profile': 'Profile',
+}

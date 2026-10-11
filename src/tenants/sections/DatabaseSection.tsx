@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Database } from 'lucide-react'
 import { Button } from '@/components/Button'
-import { Label, TextInput } from '@/components/Field'
+import { Hint, Label, TextInput } from '@/components/Field'
 import { cn } from '@/lib/cn'
 import { updateTenant } from '../api'
 import { SaveStatus, SectionHeader, type SectionProps } from './shared'
@@ -42,11 +42,11 @@ export function DatabaseSection({ tenant, onSaved }: SectionProps) {
   }
 
   return (
-    <div className="max-w-[560px]">
+    <>
       <SectionHeader title="Database" description="Where this client's data lives." />
 
-      <form onSubmit={onSubmit} className="space-y-5">
-        <div className="grid gap-3 sm:grid-cols-2">
+      <form onSubmit={onSubmit} className="stack" style={{ maxWidth: 560 }}>
+        <div className="choice-grid">
           {[
             { value: false, title: 'Shared BizDock database', text: 'Default. Data is kept apart by security rules.' },
             { value: true, title: 'Own Supabase project', text: 'The client’s panel connects to a separate project.' },
@@ -58,15 +58,12 @@ export function DatabaseSection({ tenant, onSaved }: SectionProps) {
                 setOwn(o.value)
                 setSaved(false)
               }}
-              className={cn(
-                'rounded-xl border p-4 text-left',
-                own === o.value ? 'border-brand bg-brand-soft' : 'border-gray-200 hover:bg-gray-50',
-              )}
+              className={cn('choice', own === o.value && 'is-active')}
             >
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <Database className="size-4" /> {o.title}
-              </div>
-              <div className="mt-1 text-xs text-gray-600">{o.text}</div>
+              <b>
+                <Database size={15} /> {o.title}
+              </b>
+              <small>{o.text}</small>
             </button>
           ))}
         </div>
@@ -93,13 +90,11 @@ export function DatabaseSection({ tenant, onSaved }: SectionProps) {
                 placeholder="sb_publishable_…"
                 value={key}
                 onChange={(e) => setKey(e.target.value)}
-                className="font-mono"
+                className="input-mono"
               />
-              <p className="mt-1 text-xs text-gray-500">
-                Only the public key. Never paste a secret or service-role key here.
-              </p>
+              <Hint>Only the public key. Never paste a secret or service-role key here.</Hint>
             </div>
-            <div className="rounded-xl bg-amber-50 p-4 text-sm text-amber-800">
+            <div className="alert alert-warning">
               Switching moves where the client&apos;s panel reads and writes. The other project must already have the
               same tables and the client&apos;s users; data isn&apos;t copied automatically.
             </div>
@@ -107,10 +102,12 @@ export function DatabaseSection({ tenant, onSaved }: SectionProps) {
         )}
 
         <SaveStatus error={error} saved={saved} />
-        <Button type="submit" variant="dark" disabled={busy}>
-          {busy ? 'Saving…' : 'Save database setting'}
-        </Button>
+        <div>
+          <Button type="submit" variant="dark" disabled={busy}>
+            {busy ? 'Saving…' : 'Save database setting'}
+          </Button>
+        </div>
       </form>
-    </div>
+    </>
   )
 }
