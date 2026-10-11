@@ -145,3 +145,8 @@ h1, h2, h3, h4, h5 { font-weight: 700; }
 .link-btn { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: var(--brand); font: inherit; font-weight: 600; font-size: 12.5px; cursor: pointer; }
 .link-btn:hover:not(:disabled) { text-decoration: underline; }
 .link-btn:disabled { opacity: .7; cursor: default; }
+
+/* tighter vertical rhythm in forms: smaller gap between field rows and sections */
+.form-grid { row-gap: 10px; column-gap: 14px; }
+.form-section { gap: 10px; }
+.drawer-body form.stack, .modal-body form.stack { gap: 18px !important; }
