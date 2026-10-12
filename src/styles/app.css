@@ -277,3 +277,6 @@ h1, h2, h3, h4, h5 { font-weight: 700; }
 .pipe-tile { border: 1px solid var(--line); border-left: 3px solid var(--c); border-radius: var(--radius-sm); padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; }
 .pipe-tile small { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pipe-tile b { font-size: 16px; }
+
+/* drawer content keeps its full height so the drawer body scrolls (cards with overflow:hidden were being squashed) */
+.drawer-body > *, .modal-body > * { flex-shrink: 0; }
