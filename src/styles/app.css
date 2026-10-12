@@ -280,3 +280,6 @@ h1, h2, h3, h4, h5 { font-weight: 700; }
 
 /* drawer content keeps its full height so the drawer body scrolls (cards with overflow:hidden were being squashed) */
 .drawer-body > *, .modal-body > * { flex-shrink: 0; }
+
+/* an open dropdown inside a panel must not be clipped (panels hide overflow for their rounded corners) */
+.panel:has([data-popover]), .card:has([data-popover]) { overflow: visible; }
