@@ -283,3 +283,8 @@ h1, h2, h3, h4, h5 { font-weight: 700; }
 
 /* an open dropdown inside a panel must not be clipped (panels hide overflow for their rounded corners) */
 .panel:has([data-popover]), .card:has([data-popover]) { overflow: visible; }
+
+/* no sideways page movement: stops the trackpad rubber-band / swipe-back bounce and any stray horizontal overflow */
+html, body, #root { overflow-x: hidden; overscroll-behavior-x: none; }
+.shell, .main, .page { overscroll-behavior-x: none; }
+.main { overflow-x: clip; }
