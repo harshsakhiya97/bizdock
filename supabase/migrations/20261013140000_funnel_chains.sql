@@ -1,5 +1,5 @@
 -- ============================================================
--- Communication chain per funnel (n8n-style canvas in the Funnel → Chain tab).
+-- Automation per funnel (n8n-style canvas in the Funnel → Automation tab).
 -- nodes / edges are the canvas as saved: [{id, type, position:{x,y}, data:{…}}], [{id, source, target, sourceHandle}]
 -- Node types: trigger (form submitted), whatsapp, email, call, wait, wait_event, condition (yes / no).
 -- Nothing is sent yet: WhatsApp / email / call providers are connected later; is_active is only stored.
@@ -8,7 +8,7 @@ create table public.funnel_chains (
   id          uuid primary key default gen_random_uuid(),
   tenant_id   uuid not null,
   funnel_id   uuid not null unique,
-  name        text not null default 'Communication chain',
+  name        text not null default 'Automation',
   is_active   boolean not null default false,
   nodes       jsonb not null default '[]',
   edges       jsonb not null default '[]',
