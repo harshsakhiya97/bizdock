@@ -10,6 +10,7 @@ import { DatabaseSection } from './sections/DatabaseSection'
 import { DomainsSection } from './sections/DomainsSection'
 import { GeneralSection } from './sections/GeneralSection'
 import { ModulesSection } from './sections/ModulesSection'
+import { ConnectionsSection } from './sections/ConnectionsSection'
 import { StatusBadge, TenantIcon } from './TenantBadges'
 import type { TenantRow } from './types'
 
@@ -18,6 +19,7 @@ const sections = [
   { id: 'branding', label: 'Branding' },
   { id: 'domains', label: 'Domains' },
   { id: 'modules', label: 'Modules' },
+  { id: 'connections', label: 'Connections' },
   { id: 'database', label: 'Database' },
   { id: 'delete', label: 'Delete client' },
 ] as const
@@ -88,6 +90,7 @@ export function TenantDetailPage() {
           {section === 'branding' && <BrandingSection {...props} />}
           {section === 'domains' && <DomainsSection tenant={tenant} />}
           {section === 'modules' && <ModulesSection {...props} />}
+          {section === 'connections' && <ConnectionsSection {...props} />}
           {section === 'database' && <DatabaseSection {...props} />}
           {section === 'delete' && <DangerSection tenant={tenant} />}
         </div>

@@ -9,6 +9,8 @@ export type TenantRow = {
   status: 'active' | 'suspended'
   plan: string | null
   enabled_modules: string[]
+  /** what this client may connect, e.g. { whatsapp: { allowed: true, provider: 'wati' } } */
+  connections: { whatsapp?: { allowed: boolean; provider: WhatsAppProvider | null } }
   supabase_url: string | null
   supabase_key: string | null
   created_at: string
@@ -51,3 +53,11 @@ export function isValidDomain(value: string) {
 export function isValidHexColor(value: string) {
   return /^#[0-9a-fA-F]{6}$/.test(value)
 }
+
+export type WhatsAppProvider = 'wati' | 'dovesoft' | 'aisensy' | 'meta'
+export const WHATSAPP_PROVIDERS: { key: WhatsAppProvider; label: string; description: string }[] = [
+  { key: 'wati', label: 'WATI', description: 'API endpoint + access token from WATI → API Docs' },
+  { key: 'dovesoft', label: 'Dovesoft', description: 'API key + WhatsApp number from Dovesoft' },
+  { key: 'aisensy', label: 'AiSensy', description: 'API key from AiSensy → Manage → API key' },
+  { key: 'meta', label: 'Meta (Cloud API)', description: 'Phone number ID + permanent access token from Meta Business' },
+]
