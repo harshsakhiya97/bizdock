@@ -10,7 +10,9 @@ export type TenantRow = {
   plan: string | null
   enabled_modules: string[]
   /** what this client may connect, e.g. { whatsapp: { allowed: true, provider: 'wati' } } */
-  connections: { whatsapp?: { allowed: boolean; provider: WhatsAppProvider | null } }
+  connections: {
+    whatsapp?: { allowed: boolean; provider: WhatsAppProvider | null }
+  } & Partial<Record<OtherConnection, { allowed: boolean }>>
   supabase_url: string | null
   supabase_key: string | null
   created_at: string
@@ -60,4 +62,12 @@ export const WHATSAPP_PROVIDERS: { key: WhatsAppProvider; label: string; descrip
   { key: 'dovesoft', label: 'Dovesoft', description: 'API key + WhatsApp number from Dovesoft' },
   { key: 'aisensy', label: 'AiSensy', description: 'API key from AiSensy → Manage → API key' },
   { key: 'meta', label: 'Meta (Cloud API)', description: 'Phone number ID + permanent access token from Meta Business' },
+]
+
+export type OtherConnection = 'callyzer' | 'zoom' | 'voice_call' | 'perisclaw'
+export const OTHER_CONNECTIONS: { key: OtherConnection; label: string; description: string }[] = [
+  { key: 'callyzer', label: 'Callyzer', description: 'Call logs from the team’s phones, matched to leads' },
+  { key: 'zoom', label: 'Zoom', description: 'Webinars and meetings from the calendar, attendance' },
+  { key: 'voice_call', label: 'Voice Call', description: 'Automatic one-way voice calls and click-to-call' },
+  { key: 'perisclaw', label: 'Perisclaw', description: 'Perisclaw API' },
 ]
