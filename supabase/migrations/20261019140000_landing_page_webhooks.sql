@@ -1,0 +1,8 @@
+-- A landing page can have several webhook URLs (one per form: hero, popup, footer…), each with its own
+-- key, field mapping and test mode. Applied as landing_page_webhooks:
+--   table public.landing_page_webhooks (id, tenant_id, landing_page_id, name, webhook_key unique, field_map,
+--     test_mode_until, sample, sample_at, is_active, created_at) + RLS (read like landing_pages, write funnels.edit)
+--   existing landing_pages.webhook_key / field_map / sample copied in as "Main form"
+--   trigger landing_pages_first_webhook: a new landing page gets a "Main form" webhook (its webhook_key)
+--   public.webhook_submit(p_key, p_data) now looks the key up in landing_page_webhooks
+--   (landing_pages.webhook_key / field_map / test_mode_until / sample are no longer used)
