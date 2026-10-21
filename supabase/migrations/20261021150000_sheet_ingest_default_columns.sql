@@ -1,0 +1,3 @@
+-- sheet_ingest(): our fixed Perisclaw columns (Sr No, Name, Email, Contact No, City, Purpose, Reason) always count,
+-- merged under the sheet's saved mapping (applied by patching the function text after "Sheet not found."):
+--   s.field_map := '{"Sr No":"ignore","Name":"name","Email":"email","Contact No":"phone","City":"city","Purpose":"purpose","Reason":"note"}'::jsonb || coalesce(s.field_map, '{}');
