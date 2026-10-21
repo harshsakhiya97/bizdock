@@ -13,6 +13,20 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.3',
+    date: '2026-10-21',
+    title: 'Connections per client and the Podcast Studio flow',
+    summary: 'Choose which outside services each client can connect, and the data behind their new Podcast Studio flow.',
+    new: [
+      'Connections for each client: allow WhatsApp and pick its provider (WATI, Dovesoft, AiSensy, Meta), and allow Facebook Ads, Callyzer, Zoom, Voice Call and Perisclaw.',
+      'Sub-businesses for each business, with leads, funnels and bookings linked to them.',
+      'Funnel webhooks, Google Sheet sync every minute and the WhatsApp templates connection behind each client’s workspace.',
+    ],
+    improved: [
+      'Booking invoices are numbered per business when there is no billing company.',
+    ],
+  },
+  {
     version: '0.2',
     date: '2026-10-12',
     title: 'Clients, their workspaces and every module behind them',
