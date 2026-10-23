@@ -21,6 +21,7 @@ export const releases: Release[] = [
       'Services on bookings (booking_items) and payment plans: booking_payments with label, due date and Pending / Paid status; only paid parts count as received.',
       'Invoice number given when a booking is created (per business, INV/26-27/0001).',
       'Sub-business access per team member (member_businesses.sub_business_ids), enforced on leads, bookings, their items and payments, and funnels.',
+      'Workflow runner: workflow_runs table, form submissions start runs, workflow-runner function (every minute + right after a submission) sends WATI templates and handles Wait steps.',
     ],
   },
   {
