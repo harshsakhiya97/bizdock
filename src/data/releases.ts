@@ -13,6 +13,17 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.4',
+    date: '2026-10-23',
+    title: 'Sub-business access and the data behind services and payment plans',
+    summary: 'Database changes for the client feedback release.',
+    new: [
+      'Services on bookings (booking_items) and payment plans: booking_payments with label, due date and Pending / Paid status; only paid parts count as received.',
+      'Invoice number given when a booking is created (per business, INV/26-27/0001).',
+      'Sub-business access per team member (member_businesses.sub_business_ids), enforced on leads, bookings, their items and payments, and funnels.',
+    ],
+  },
+  {
     version: '0.3',
     date: '2026-10-21',
     title: 'Connections per client and the Podcast Studio flow',
