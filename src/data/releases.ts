@@ -22,6 +22,7 @@ export const releases: Release[] = [
       'Invoice number given when a booking is created (per business, INV/26-27/0001).',
       'Sub-business access per team member (member_businesses.sub_business_ids), enforced on leads, bookings, their items and payments, and funnels.',
       'Workflow runner: workflow_runs table, form submissions start runs, workflow-runner function (every minute + right after a submission) sends WATI templates and handles Wait steps.',
+      'Workflow test run: workflow_test_run() starts a run with typed-in details (workflow_runs.is_test, test_data).',
     ],
   },
   {
