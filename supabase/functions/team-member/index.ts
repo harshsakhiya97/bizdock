@@ -18,7 +18,7 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } })
 const fail = (message: string, status = 400) => json({ error: message }, status)
 
-type BusinessPick = { business_id: string; branch_id: string | null }
+type BusinessPick = { business_id: string; branch_id: string | null; sub_business_ids?: string[] | null }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -144,7 +144,7 @@ async function create(asCaller: SupabaseClient, admin: SupabaseClient, tenantId:
   const picks = (Array.isArray(b.businesses) ? b.businesses : []) as BusinessPick[]
   if (!b.all_businesses && picks.length) {
     const { error } = await asCaller.from('member_businesses').insert(
-      picks.map((p) => ({ member_id: member.id, tenant_id: tenantId, business_id: p.business_id, branch_id: p.branch_id })),
+      picks.map((p) => ({ member_id: member.id, tenant_id: tenantId, business_id: p.business_id, branch_id: p.branch_id, sub_business_ids: p.sub_business_ids?.length ? p.sub_business_ids : null })),
     )
     if (error) return fail(`Added, but businesses were not saved: ${error.message}`)
   }
