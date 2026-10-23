@@ -12,7 +12,18 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 
 type Node = { id: string; type: string; data: Record<string, unknown> }
 type Edge = { source: string; target: string; sourceHandle?: string | null }
-type Run = { id: string; tenant_id: string; workflow_id: string; lead_id: string | null; submission_id: string | null; node_id: string; log: LogLine[] }
+type Run = {
+  id: string
+  tenant_id: string
+  workflow_id: string
+  lead_id: string | null
+  submission_id: string | null
+  node_id: string
+  log: LogLine[]
+  /** started by hand with typed-in details (Test run) */
+  is_test: boolean
+  test_data: Record<string, string> | null
+}
 type LogLine = { at: string; node_id: string; kind: string; status: 'ok' | 'skipped' | 'failed' | 'waiting' | 'stopped'; detail: string }
 
 const MAX_STEPS = 25
@@ -49,9 +60,11 @@ async function advance(admin: SupabaseClient, run: Run) {
   const save = (patch: Record<string, unknown>) =>
     admin.from('workflow_runs').update({ ...patch, log, updated_at: new Date().toISOString() }).eq('id', run.id)
 
-  const { data: wf } = await admin.from('workflows').select('id, name, is_active, archived_at, nodes, edges').eq('id', run.workflow_id).maybeSingle()
+  const { data: wf } = await admin.from('workflows').select('id, name, is_active, archived_at, nodes, edges, funnel_id').eq('id', run.workflow_id).maybeSingle()
   if (!wf) return save({ status: 'stopped', error: 'The workflow was deleted.' })
-  if (!wf.is_active || wf.archived_at) return save({ status: 'stopped', error: 'The workflow was switched off.' })
+  if (wf.archived_at) return save({ status: 'stopped', error: 'The workflow was deleted.' })
+  // a test run works while the workflow is off
+  if (!wf.is_active && !run.is_test) return save({ status: 'stopped', error: 'The workflow was switched off.' })
   const nodes = (wf.nodes ?? []) as Node[]
   const edges = (wf.edges ?? []) as Edge[]
   const byId = new Map(nodes.map((n) => [n.id, n]))
@@ -60,7 +73,7 @@ async function advance(admin: SupabaseClient, run: Run) {
     return e ? byId.get(e.target) ?? null : null
   }
 
-  const ctx = await context(admin, run)
+  const ctx = await context(admin, run, (wf.funnel_id as string | null) ?? null)
   let at = run.node_id
   for (let i = 0; i < MAX_STEPS; i++) {
     const n = nextOf(at)
@@ -93,7 +106,34 @@ async function advance(admin: SupabaseClient, run: Run) {
 
 type Ctx = { vars: Record<string, string>; leadPhone: string | null; tenantId: string }
 
-async function context(admin: SupabaseClient, run: Run): Promise<Ctx> {
+async function context(admin: SupabaseClient, run: Run, workflowFunnel: string | null): Promise<Ctx> {
+  if (run.is_test) {
+    // test run: the typed-in details, with the workflow's funnel and business
+    const t = run.test_data ?? {}
+    const { data: f } = workflowFunnel ? await admin.from('funnels').select('name, business_id').eq('id', workflowFunnel).maybeSingle() : { data: null }
+    const { data: b } = f?.business_id ? await admin.from('businesses').select('name').eq('id', f.business_id).maybeSingle() : { data: null }
+    const name = String(t.name ?? '').trim()
+    const extra = Object.fromEntries(Object.entries(t).map(([k, v]) => [k, String(v ?? '')]))
+    return {
+      tenantId: run.tenant_id,
+      leadPhone: t.phone ?? null,
+      vars: {
+        ...extra,
+        first_name: name.split(/\s+/)[0] ?? '',
+        name,
+        phone: String(t.phone ?? ''),
+        email: String(t.email ?? ''),
+        city: String(t.city ?? ''),
+        funnel: f?.name ?? '',
+        landing_page: '',
+        business: b?.name ?? '',
+        event_title: '',
+        event_date: '',
+        event_time: '',
+        event_link: '',
+      },
+    }
+  }
   const { data: lead } = run.lead_id
     ? await admin.from('leads').select('first_name, last_name, phone, whatsapp, email, city, business_id, funnel_id, landing_page_id').eq('id', run.lead_id).maybeSingle()
     : { data: null }
