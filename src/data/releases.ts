@@ -23,6 +23,7 @@ export const releases: Release[] = [
       'Sub-business access per team member (member_businesses.sub_business_ids), enforced on leads, bookings, their items and payments, and funnels.',
       'Workflow runner: workflow_runs table, form submissions start runs, workflow-runner function (every minute + right after a submission) sends WATI templates and handles Wait steps.',
       'Workflow test run: workflow_test_run() starts a run with typed-in details (workflow_runs.is_test, test_data).',
+      'businesses.has_sub_businesses and businesses.type (a business without sub-businesses has a type of its own).',
     ],
   },
   {
