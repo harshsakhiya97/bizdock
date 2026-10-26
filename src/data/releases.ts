@@ -13,6 +13,16 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.6',
+    date: '2026-10-26',
+    title: 'Paid Podcast flow',
+    summary: 'Database changes for the Paid Podcast flow.',
+    new: [
+      'meetings table (lead, date, time, mode, link / location, status, outcome note, reschedule history) with RLS on the meetings permission; Not qualified moves the lead to its funnel’s Lost stage.',
+      'Shared studio: Studio Rental and Paid Podcast bookings (not cancelled) can’t overlap; studio_busy() lists the studio’s bookings (slot only) for both calendars.',
+    ],
+  },
+  {
     version: '0.5',
     date: '2026-10-26',
     title: 'Studio rental flow completed',
