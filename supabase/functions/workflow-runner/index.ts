@@ -4,7 +4,8 @@
 //     (called by pg_cron every minute and straight after a form submission starts a run;
 //      the secret lives in the vault: public.workflow_cron_secret())
 //
-// Steps done now: WhatsApp (approved template through WATI) and Wait. Email, Call, Wait for event and
+// Steps done now: WhatsApp (approved template through WATI), Bulk WhatsApp (several templates, each a set
+// time after the run started, with an optional stop condition) and Wait. Email, Call, Wait for event and
 // Go to workflow are skipped (logged), Yes/No and Switch stop the run — they come later.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -23,6 +24,9 @@ type Run = {
   /** started by hand with typed-in details (Test run) */
   is_test: boolean
   test_data: Record<string, string> | null
+  created_at: string
+  /** progress inside a step that runs over time */
+  state: { bulk?: { node: string; i: number } | null } | null
 }
 type LogLine = { at: string; node_id: string; kind: string; status: 'ok' | 'skipped' | 'failed' | 'waiting' | 'stopped'; detail: string }
 
@@ -61,8 +65,9 @@ async function advance(admin: SupabaseClient, run: Run) {
   const log: LogLine[] = Array.isArray(run.log) ? [...run.log] : []
   const note = (n: Node, status: LogLine['status'], detail: string) =>
     log.push({ at: new Date().toISOString(), node_id: n.id, kind: n.type, status, detail })
+  const state = { ...(run.state ?? {}) }
   const save = (patch: Record<string, unknown>) =>
-    admin.from('workflow_runs').update({ ...patch, log, updated_at: new Date().toISOString() }).eq('id', run.id)
+    admin.from('workflow_runs').update({ ...patch, log, state, updated_at: new Date().toISOString() }).eq('id', run.id)
 
   const { data: wf } = await admin.from('workflows').select('id, name, is_active, archived_at, nodes, edges, funnel_id').eq('id', run.workflow_id).maybeSingle()
   if (!wf) return save({ status: 'stopped', error: 'The workflow was deleted.' })
@@ -79,8 +84,11 @@ async function advance(admin: SupabaseClient, run: Run) {
 
   const ctx = await context(admin, run, (wf.funnel_id as string | null) ?? null)
   let at = run.node_id
+  // waiting inside a Bulk WhatsApp step: carry on with that step
+  let resume = byId.get(at)?.type === 'bulk_whatsapp' && state.bulk?.node === at
   for (let i = 0; i < MAX_STEPS; i++) {
-    const n = nextOf(at)
+    const n = resume ? byId.get(at)! : nextOf(at)
+    resume = false
     if (!n) return save({ status: 'done', node_id: at, error: null })
     const d = n.data ?? {}
 
@@ -92,6 +100,35 @@ async function advance(admin: SupabaseClient, run: Run) {
         note(n, 'failed', (e as Error).message)
         return save({ status: 'failed', node_id: at, error: (e as Error).message })
       }
+    } else if (n.type === 'bulk_whatsapp') {
+      // messages in time order; each one is due this long after the run started
+      const rows = ((d.rows ?? []) as Record<string, unknown>[])
+        .map((r, idx) => ({ r, idx, min: (Number(r.amount) || 0) * ((UNIT_MS[String(r.unit)] ?? UNIT_MS.minutes) / 60_000) }))
+        .sort((a, b) => a.min - b.min || a.idx - b.idx)
+      const start = new Date(run.created_at).getTime()
+      let k = state.bulk && state.bulk.node === n.id ? state.bulk.i : 0
+      while (k < rows.length) {
+        if (d.stop_on && run.lead_id && !run.is_test && (await matches(admin, run.lead_id, d.stop as Cond))) {
+          note(n, 'stopped', `Stop condition met before message ${k + 1} of ${rows.length}; the rest aren't sent.`)
+          state.bulk = null
+          return save({ status: 'stopped', node_id: n.id, error: null })
+        }
+        const due = start + rows[k].min * 60_000
+        if (due > Date.now() + 5_000) {
+          state.bulk = { node: n.id, i: k }
+          note(n, 'waiting', `Message ${k + 1} of ${rows.length} at ${new Date(due).toISOString()}`)
+          return save({ status: 'waiting', node_id: n.id, next_at: new Date(due).toISOString() })
+        }
+        try {
+          const detail = await sendWhatsApp(admin, run, wf.name as string, rows[k].r, ctx)
+          note(n, 'ok', `${k + 1}/${rows.length}: ${detail}`)
+        } catch (e) {
+          // one message failing doesn't stop the rest
+          note(n, 'failed', `${k + 1}/${rows.length}: ${(e as Error).message}`)
+        }
+        k++
+      }
+      state.bulk = null
     } else if (n.type === 'wait') {
       const ms = Math.max(1, Number(d.amount) || 1) * (UNIT_MS[String(d.unit)] ?? UNIT_MS.days)
       const until = new Date(Date.now() + ms)
@@ -106,6 +143,32 @@ async function advance(admin: SupabaseClient, run: Run) {
     at = n.id
   }
   return save({ status: 'stopped', node_id: at, error: 'Too many steps in one go.' })
+}
+
+type Cond = { field: string; op: 'is' | 'is_not'; value: string }
+
+/** does the lead (as it is now) match a condition — Stage, Tag, Form, UTM source, Form field filled */
+async function matches(admin: SupabaseClient, leadId: string, c: Cond | undefined) {
+  if (!c?.value) return false
+  const { data: l } = await admin
+    .from('leads')
+    .select('stage_id, tags, landing_page_id, webhook_id, utm_source, email, city, purpose, extra')
+    .eq('id', leadId)
+    .maybeSingle()
+  if (!l) return false
+  const v = String(c.value).trim().toLowerCase()
+  const extra = (l.extra ?? {}) as Record<string, unknown>
+  let hit = false
+  if (c.field === 'stage') hit = l.stage_id === c.value
+  else if (c.field === 'tag') hit = ((l.tags ?? []) as string[]).some((t) => t.trim().toLowerCase() === v)
+  else if (c.field === 'landing_page') hit = l.webhook_id === c.value || l.landing_page_id === c.value
+  else if (c.field === 'utm_source') hit = String(l.utm_source ?? '').trim().toLowerCase() === v
+  else if (c.field === 'field_filled') {
+    const own = (l as Record<string, unknown>)[c.value]
+    const ext = extra[c.value] ?? Object.entries(extra).find(([k]) => varKey(k) === varKey(c.value))?.[1]
+    hit = String(own ?? ext ?? '').trim() !== ''
+  } else return false // attendance: not tracked yet
+  return c.op === 'is_not' ? !hit : hit
 }
 
 type Ctx = { vars: Record<string, string>; leadPhone: string | null; tenantId: string }
