@@ -192,6 +192,9 @@ async function sendWhatsApp(admin: SupabaseClient, run: Run, workflowName: strin
     const { data: p } = m?.user_id ? await admin.from('profiles').select('phone').eq('id', m.user_id).maybeSingle() : { data: null }
     to = waNumber(p?.phone)
     if (!to) throw new Error('The team member has no phone number on their profile.')
+  } else if (d.to === 'custom') {
+    to = waNumber(String(d.custom_phone ?? ''))
+    if (!to) throw new Error('The custom number is not a valid 10-digit number.')
   } else {
     to = waNumber(ctx.leadPhone)
     if (!to) throw new Error('The lead has no valid phone number.')
@@ -234,7 +237,7 @@ async function sendWhatsApp(admin: SupabaseClient, run: Run, workflowName: strin
   }
 
   // keep a copy on the lead (WhatsApp tab)
-  if (run.lead_id && d.to !== 'team') {
+  if (run.lead_id && (!d.to || d.to === 'lead')) {
     const body = fill(String(d.template_body ?? d.message ?? ''), { ...ctx.vars, ...Object.fromEntries(parameters.map((p) => [p.name, p.value])) })
     await admin.from('lead_messages').insert({ tenant_id: run.tenant_id, lead_id: run.lead_id, channel: 'whatsapp', title: template, body, via: 'workflow' })
   }
