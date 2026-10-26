@@ -13,6 +13,16 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.5',
+    date: '2026-10-26',
+    title: 'Studio rental flow completed',
+    summary: 'Database changes for the Studio Rental flow.',
+    new: [
+      'Funnel lead owner: funnels.assign_mode (none / single / round_robin), assign_members and assign_cursor; a trigger gives new funnel leads without an owner their owner, skipping inactive members.',
+      'Workflow runner: WhatsApp to a custom number; purpose and the lead\'s extra fields as message variables.',
+    ],
+  },
+  {
     version: '0.4',
     date: '2026-10-23',
     title: 'Sub-business access and the data behind services and payment plans',
