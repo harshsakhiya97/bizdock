@@ -27,6 +27,10 @@ type Run = {
 type LogLine = { at: string; node_id: string; kind: string; status: 'ok' | 'skipped' | 'failed' | 'waiting' | 'stopped'; detail: string }
 
 const MAX_STEPS = 25
+/** a field name as a message variable: "Company Name" → company_name (same as the builder) */
+const varKey = (k: string) => k.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+const extraVars = (o: Record<string, unknown> | null | undefined) =>
+  Object.fromEntries(Object.entries(o ?? {}).filter(([, v]) => v != null && typeof v !== 'object').map(([k, v]) => [varKey(k), String(v)]))
 const UNIT_MS: Record<string, number> = { minutes: 60_000, hours: 3_600_000, days: 86_400_000 }
 
 Deno.serve(async (req) => {
@@ -113,7 +117,7 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
     const { data: f } = workflowFunnel ? await admin.from('funnels').select('name, business_id').eq('id', workflowFunnel).maybeSingle() : { data: null }
     const { data: b } = f?.business_id ? await admin.from('businesses').select('name').eq('id', f.business_id).maybeSingle() : { data: null }
     const name = String(t.name ?? '').trim()
-    const extra = Object.fromEntries(Object.entries(t).map(([k, v]) => [k, String(v ?? '')]))
+    const extra = extraVars(t)
     return {
       tenantId: run.tenant_id,
       leadPhone: t.phone ?? null,
@@ -135,7 +139,7 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
     }
   }
   const { data: lead } = run.lead_id
-    ? await admin.from('leads').select('first_name, last_name, phone, whatsapp, email, city, business_id, funnel_id, landing_page_id').eq('id', run.lead_id).maybeSingle()
+    ? await admin.from('leads').select('first_name, last_name, phone, whatsapp, email, city, business_id, funnel_id, landing_page_id, purpose, extra').eq('id', run.lead_id).maybeSingle()
     : { data: null }
   const [{ data: biz }, { data: funnel }, { data: page }] = await Promise.all([
     lead?.business_id ? admin.from('businesses').select('name').eq('id', lead.business_id).maybeSingle() : Promise.resolve({ data: null }),
@@ -147,6 +151,9 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
     tenantId: run.tenant_id,
     leadPhone: lead ? lead.whatsapp || lead.phone : null,
     vars: {
+      // extra fields saved on the lead (form / sheet columns), then the standard ones
+      ...extraVars(lead?.extra as Record<string, unknown> | null),
+      purpose: lead?.purpose ?? String((lead?.extra as Record<string, unknown> | null)?.purpose ?? ''),
       first_name: first,
       name: [first, lead?.last_name ?? ''].join(' ').trim(),
       phone: lead?.phone ?? '',
