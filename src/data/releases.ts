@@ -20,6 +20,7 @@ export const releases: Release[] = [
     new: [
       'meetings table (lead, date, time, mode, link / location, status, outcome note, reschedule history) with RLS on the meetings permission; Not qualified moves the lead to its funnel’s Lost stage.',
       'Shared studio: Studio Rental and Paid Podcast bookings (not cancelled) can’t overlap; studio_busy() lists the studio’s bookings (slot only) for both calendars.',
+      'Workflow runner: Bulk WhatsApp step (messages timed from the run’s start, stop condition checked before each one); workflow_runs.state keeps its progress.',
     ],
   },
   {
