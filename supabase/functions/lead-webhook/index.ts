@@ -5,6 +5,8 @@
 // Accepts JSON, application/x-www-form-urlencoded or multipart form data. UTM values may come in
 // the body or the query string. Required: name, email, phone (+ the page's own required fields).
 // Same phone in the same funnel updates that lead; otherwise a new lead is added to the first stage.
+// A webhook can instead update a lead, book a meeting for it or log a payment (see webhook_submit);
+// nested JSON is flattened (a.b.c → a_b_c) so its fields can be mapped.
 // For a plain HTML form, add a hidden "_redirect" field to send the visitor to a thank-you page.
 // No login: the key is the secret. Everything else is checked by public.webhook_submit.
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
@@ -17,7 +19,7 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } })
 
-const MAX_FIELDS = 40
+const MAX_FIELDS = 80
 const MAX_LEN = 2000
 
 Deno.serve(async (req) => {
@@ -26,9 +28,15 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url)
   const data: Record<string, string> = {}
-  const put = (k: string, v: unknown) => {
+  const put = (k: string, v: unknown, depth = 0) => {
     const key = k.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 60)
-    if (!key || typeof v === 'object') return
+    if (!key) return
+    // nested JSON (booking tools, payment gateways): { appointment: { bookingStart } } → appointment_bookingstart
+    if (v && typeof v === 'object') {
+      if (depth >= 5) return
+      for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) put(`${key}_${k2}`, v2, depth + 1)
+      return
+    }
     if (Object.keys(data).length >= MAX_FIELDS && !(key in data)) return
     data[key] = String(v ?? '').slice(0, MAX_LEN)
   }
