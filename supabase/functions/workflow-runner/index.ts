@@ -158,30 +158,112 @@ async function advance(admin: SupabaseClient, run: Run) {
   return save({ status: 'stopped', node_id: at, error: 'Too many steps in one go.' })
 }
 
-type Cond = { field: string; op: 'is' | 'is_not'; value: string }
+type Cond = { field: string; op: string; value: string }
 
-/** does the lead (as it is now) match a condition — Stage, Tag, Form, UTM source, Form field filled */
-async function matches(admin: SupabaseClient, leadId: string, c: Cond | undefined) {
-  if (!c?.value) return false
-  const { data: l } = await admin
-    .from('leads')
-    .select('stage_id, tags, landing_page_id, webhook_id, utm_source, email, city, purpose, extra')
-    .eq('id', leadId)
-    .maybeSingle()
+/** older saved conditions ("is" / "is not", "Form field is filled") in today's terms */
+function normalizeCond(c: Cond): Cond {
+  if (c.field === 'field_filled') return { field: `x:${c.value}`, op: c.op === 'is_not' ? 'empty' : 'not_empty', value: '' }
+  return { field: c.field, op: c.op === 'is' ? 'eq' : c.op === 'is_not' ? 'neq' : c.op, value: String(c.value ?? '') }
+}
+
+const LEAD_COLS: Record<string, string> = {
+  first_name: 'first_name', last_name: 'last_name', phone: 'phone', email: 'email', city: 'city', purpose: 'purpose', notes: 'notes',
+  stage: 'stage_id', source: 'source_id', owner: 'owner_id', temperature: 'temperature',
+  estimated_amount: 'estimated_amount', required_hours: 'required_hours', required_on: 'required_on', created_at: 'created_at',
+  utm_source: 'utm_source', utm_medium: 'utm_medium', utm_campaign: 'utm_campaign', utm_term: 'utm_term', utm_content: 'utm_content',
+}
+const NUMBER_FIELDS = new Set(['estimated_amount', 'required_hours'])
+const DATE_FIELDS = new Set(['required_on', 'created_at'])
+
+/**
+ * Does the lead (as it is now) match a condition: any lead field or extra field (equals, not equals, empty,
+ * not empty, and > >= < <= for numbers / dates), its tags, or whether it has a meeting / a payment.
+ */
+async function matches(admin: SupabaseClient, leadId: string, raw: Cond | undefined) {
+  if (!raw?.field) return false
+  const c = normalizeCond(raw)
+  const op = c.op
+
+  if (c.field === 'meeting' || c.field === 'payment') {
+    let has = false
+    if (c.field === 'meeting') {
+      const { count } = await admin.from('meetings').select('id', { count: 'exact', head: true }).eq('lead_id', leadId).neq('status', 'cancelled')
+      has = (count ?? 0) > 0
+    } else {
+      const { data: bk } = await admin.from('bookings').select('id').eq('lead_id', leadId).neq('status', 'cancelled')
+      const ids = (bk ?? []).map((b) => b.id as string)
+      if (ids.length) {
+        const { count } = await admin.from('booking_payments').select('id', { count: 'exact', head: true }).in('booking_id', ids).eq('status', 'paid')
+        has = (count ?? 0) > 0
+      }
+      if (!has) {
+        const { count } = await admin.from('lead_submissions').select('id', { count: 'exact', head: true }).eq('lead_id', leadId).eq('result', 'payment')
+        has = (count ?? 0) > 0
+      }
+    }
+    return op === 'not_exists' ? !has : has
+  }
+  if (c.field === 'attendance') return false // not tracked yet
+
+  const { data: l } = await admin.from('leads').select('*').eq('id', leadId).maybeSingle()
   if (!l) return false
-  const v = String(c.value).trim().toLowerCase()
-  const extra = (l.extra ?? {}) as Record<string, unknown>
-  let hit = false
-  if (c.field === 'stage') hit = l.stage_id === c.value
-  else if (c.field === 'tag') hit = ((l.tags ?? []) as string[]).some((t) => t.trim().toLowerCase() === v)
-  else if (c.field === 'landing_page') hit = l.webhook_id === c.value || l.landing_page_id === c.value
-  else if (c.field === 'utm_source') hit = String(l.utm_source ?? '').trim().toLowerCase() === v
-  else if (c.field === 'field_filled') {
-    const own = (l as Record<string, unknown>)[c.value]
-    const ext = extra[c.value] ?? Object.entries(extra).find(([k]) => varKey(k) === varKey(c.value))?.[1]
-    hit = String(own ?? ext ?? '').trim() !== ''
-  } else return false // attendance: not tracked yet
-  return c.op === 'is_not' ? !hit : hit
+  const lead = l as Record<string, unknown>
+
+  if (c.field === 'tag') {
+    const tags = ((lead.tags ?? []) as string[]).map((t) => t.trim().toLowerCase())
+    if (op === 'empty') return tags.length === 0
+    if (op === 'not_empty') return tags.length > 0
+    const has = tags.includes(c.value.trim().toLowerCase())
+    return op === 'neq' ? !has : has
+  }
+
+  // the lead's value for the field
+  let v: string
+  if (c.field === 'name') v = [lead.first_name, lead.last_name].filter(Boolean).join(' ')
+  else if (c.field === 'landing_page') v = String(lead.webhook_id ?? lead.landing_page_id ?? '')
+  else if (c.field.startsWith('x:')) {
+    const key = c.field.slice(2)
+    const extra = (lead.extra ?? {}) as Record<string, unknown>
+    const hit = extra[key] ?? Object.entries(extra).find(([k]) => varKey(k) === varKey(key))?.[1] ?? lead[key]
+    v = hit == null || typeof hit === 'object' ? '' : String(hit)
+  } else if (c.field === 'created_at') {
+    // the day it was added, India time
+    v = lead.created_at ? new Date(new Date(String(lead.created_at)).getTime() + 330 * 60_000).toISOString().slice(0, 10) : ''
+  } else v = String(lead[LEAD_COLS[c.field] ?? c.field] ?? '')
+  v = v.trim()
+  const want = c.value.trim()
+
+  if (op === 'empty') return v === ''
+  if (op === 'not_empty') return v !== ''
+  if (c.field === 'landing_page' && op === 'eq') return lead.webhook_id === want || lead.landing_page_id === want
+  if (c.field === 'landing_page' && op === 'neq') return lead.webhook_id !== want && lead.landing_page_id !== want
+
+  const isDate = DATE_FIELDS.has(c.field)
+  const isNum = NUMBER_FIELDS.has(c.field) || (c.field.startsWith('x:') && ['gt', 'gte', 'lt', 'lte'].includes(op))
+  if (['gt', 'gte', 'lt', 'lte'].includes(op) || ((isNum || isDate) && (op === 'eq' || op === 'neq'))) {
+    if (v === '') return op === 'neq'
+    let a: number
+    let b: number
+    if (isDate) {
+      a = Date.parse(`${v.slice(0, 10)}T00:00:00Z`)
+      b = Date.parse(`${want.slice(0, 10)}T00:00:00Z`)
+    } else {
+      a = Number(v.replace(/[,\s₹]/g, ''))
+      b = Number(want.replace(/[,\s₹]/g, ''))
+    }
+    if (Number.isNaN(a) || Number.isNaN(b)) return op === 'neq'
+    if (op === 'eq') return a === b
+    if (op === 'neq') return a !== b
+    if (op === 'gt') return a > b
+    if (op === 'gte') return a >= b
+    if (op === 'lt') return a < b
+    return a <= b
+  }
+
+  // text: no case; phone numbers by their last 10 digits
+  const same =
+    c.field === 'phone' ? v.replace(/\D/g, '').slice(-10) === want.replace(/\D/g, '').slice(-10) : v.toLowerCase() === want.toLowerCase()
+  return op === 'neq' ? !same : same
 }
 
 type Ctx = { vars: Record<string, string>; leadPhone: string | null; tenantId: string }
