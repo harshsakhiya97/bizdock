@@ -5,7 +5,8 @@
 //      the secret lives in the vault: public.workflow_cron_secret())
 //
 // Steps done now: WhatsApp (approved template through WATI), Bulk WhatsApp (several templates, each a set
-// time after the run started, with an optional stop condition) and Wait. Email, Call, Wait for event and
+// time after the run started, with an optional stop condition), Short link (<app>/<code> for the lead,
+// kept for later steps as {{short_link}}) and Wait. Email, Call, Wait for event and
 // Go to workflow are skipped (logged), Yes/No and Switch stop the run — they come later.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -26,7 +27,7 @@ type Run = {
   test_data: Record<string, string> | null
   created_at: string
   /** progress inside a step that runs over time */
-  state: { bulk?: { node: string; i: number } | null } | null
+  state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string> } | null
 }
 type LogLine = { at: string; node_id: string; kind: string; status: 'ok' | 'skipped' | 'failed' | 'waiting' | 'stopped'; detail: string }
 
@@ -83,6 +84,8 @@ async function advance(admin: SupabaseClient, run: Run) {
   }
 
   const ctx = await context(admin, run, (wf.funnel_id as string | null) ?? null)
+  // values made by earlier steps of this run (short links)
+  Object.assign(ctx.vars, state.vars ?? {})
   let at = run.node_id
   // waiting inside a Bulk WhatsApp step: carry on with that step
   let resume = byId.get(at)?.type === 'bulk_whatsapp' && state.bulk?.node === at
@@ -129,6 +132,16 @@ async function advance(admin: SupabaseClient, run: Run) {
         k++
       }
       state.bulk = null
+    } else if (n.type === 'short_link') {
+      try {
+        const made = await makeShortLink(admin, run, d, ctx)
+        state.vars = { ...(state.vars ?? {}), ...made.vars }
+        Object.assign(ctx.vars, made.vars)
+        note(n, 'ok', `Made ${made.short} → ${made.url}`)
+      } catch (e) {
+        note(n, 'failed', (e as Error).message)
+        return save({ status: 'failed', node_id: at, error: (e as Error).message })
+      }
     } else if (n.type === 'wait') {
       const ms = Math.max(1, Number(d.amount) || 1) * (UNIT_MS[String(d.unit)] ?? UNIT_MS.days)
       const until = new Date(Date.now() + ms)
@@ -231,6 +244,35 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
       event_link: '',
     },
   }
+}
+
+/** a short link for this lead: <app>/<code> → the step's URL with the lead's fields filled in */
+async function makeShortLink(admin: SupabaseClient, run: Run, d: Record<string, unknown>, ctx: Ctx) {
+  const raw = String(d.url ?? '').trim()
+  // a field at the very start is a whole URL (kept as it is); fields inside are URL-encoded
+  const url = raw.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (m, k, at: number) => (at === 0 ? (ctx.vars[k] ?? '').trim() : encodeURIComponent(ctx.vars[k] ?? '')))
+  if (!/^https?:\/\/[^\s]+$/i.test(url)) throw new Error(`Not a valid URL after filling in the lead's fields: "${url.slice(0, 120)}"`)
+  const key = varKey(String(d.var ?? '')) || 'short_link'
+  const base = String(d.base_url ?? '').replace(/\/+$/, '')
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+  for (let tries = 0; tries < 5; tries++) {
+    const bytes = crypto.getRandomValues(new Uint8Array(7))
+    const code = Array.from(bytes, (b) => abc[b % abc.length]).join('')
+    const { error } = await admin.from('short_links').insert({
+      tenant_id: run.tenant_id,
+      code,
+      url,
+      lead_id: run.lead_id,
+      workflow_id: run.workflow_id,
+      run_id: run.id,
+    })
+    if (!error) {
+      const short = base ? `${base}/${code}` : code
+      return { short, url, vars: { [key]: short, [`${key}_code`]: code } }
+    }
+    if (!String(error.message).includes('duplicate')) throw new Error(error.message)
+  }
+  throw new Error('Could not make a unique short link; try again.')
 }
 
 const fill = (s: string, vars: Record<string, string>) => s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => vars[k] ?? '')
