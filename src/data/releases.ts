@@ -22,6 +22,7 @@ export const releases: Release[] = [
       'Field mapping: extra:<name>, Tags (private.tag_list); lead-webhook keeps lists as one field and flattens nested JSON.',
       'short_links table and short_link_open(); workflow runner Generate link step (run variables kept in workflow_runs.state).',
       'Workflow runner conditions on any lead / extra field, tags, meetings and payments; workflow_rerun().',
+      'meetings.assigned_to (team member) and private.member_by_name(); funnel_webhooks.meet_mode (owner / single / round_robin), meet_members and meet_cursor; create_meeting assigns the named team member, else per meet_mode.',
     ],
   },
   {
