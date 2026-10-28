@@ -6,8 +6,8 @@
 // the body or the query string. Required: name, email, phone (+ the page's own required fields).
 // Same phone in the same funnel updates that lead; otherwise a new lead is added to the first stage.
 // A webhook can instead update a lead, book a meeting for it or log a payment (see webhook_submit);
-// nested JSON is flattened (a.b.c → a_b_c) so its fields can be mapped; a list of values stays one field
-// ("a, b"), which can be mapped to Tags.
+// nested JSON (and JSON sent as text) becomes dotted paths (a.b.0.c) to pick from when mapping; a list of
+// values stays one field ("a, b"), which can be mapped to Tags.
 // For a plain HTML form, add a hidden "_redirect" field to send the visitor to a thank-you page.
 // No login: the key is the secret. Everything else is checked by public.webhook_submit.
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
@@ -20,7 +20,7 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } })
 
-const MAX_FIELDS = 80
+const MAX_FIELDS = 400
 const MAX_LEN = 2000
 
 Deno.serve(async (req) => {
@@ -29,17 +29,29 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url)
   const data: Record<string, string> = {}
-  const put = (k: string, v: unknown, depth = 0) => {
-    const key = k.trim().replace(/\[\]$/, '').toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 60)
-    if (!key) return
+  const seg = (k: string) => k.trim().replace(/\[\]$/, '').toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 60)
+  // one field per value; a field inside an object is its path: appointment.bookings.0.customer.phone
+  const put = (k: string, v: unknown, depth = 0, prefix = '') => {
+    const s1 = seg(k)
+    if (!s1) return
+    const key = prefix ? `${prefix}.${s1}` : s1
+    // JSON sent as text ({"firstName":"Rahul"…}) is opened like any other object
+    if (typeof v === 'string' && /^\s*[[{]/.test(v) && depth < 6) {
+      try {
+        const parsed = JSON.parse(v)
+        if (parsed && typeof parsed === 'object') v = parsed
+      } catch {
+        /* plain text */
+      }
+    }
     // a list of plain values (checkboxes: ["LinkedIn", "Podcast"]) stays one field: "LinkedIn, Podcast"
     if (Array.isArray(v) && v.every((x) => x == null || typeof x !== 'object')) {
       v = v.filter((x) => x != null && String(x).trim() !== '').map((x) => String(x).trim()).join(', ')
     }
-    // nested JSON (booking tools, payment gateways): { appointment: { bookingStart } } → appointment_bookingstart
+    // objects and lists of objects: each inner field on its own path
     if (v && typeof v === 'object') {
-      if (depth >= 5) return
-      for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) put(`${key}_${k2}`, v2, depth + 1)
+      if (depth >= 6) return
+      for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) put(k2, v2, depth + 1, key)
       return
     }
     if (Object.keys(data).length >= MAX_FIELDS && !(key in data)) return
