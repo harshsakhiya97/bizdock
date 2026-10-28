@@ -288,7 +288,10 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
   // 2. Q&A (webinars; meetings where Zoom has it)
   const comments: Row[] = []
   try {
-    const qa = await zoom(a, 'GET', `/report/${isWebinar ? 'webinars' : 'meetings'}/${zoomId}/qa`)
+    // webinars: past_webinars (scope webinar:read:past_qa:admin), else the report
+    const qa = isWebinar
+      ? await zoom(a, 'GET', `/past_webinars/${zoomId}/qa`).catch(() => zoom(a, 'GET', `/report/webinars/${zoomId}/qa`))
+      : await zoom(a, 'GET', `/report/meetings/${zoomId}/qa`)
     for (const q of (qa.questions as Row[]) ?? []) {
       const email = norm(q.email)
       const name = String(q.name ?? '').trim()
