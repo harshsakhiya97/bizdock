@@ -233,7 +233,12 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
   try {
     participants = await zoomAll(a, `/report/${isWebinar ? 'webinars' : 'meetings'}/${zoomId}/participants`, 'participants')
   } catch (e) {
-    notes.push(`Attendance: ${(e as Error).message}`)
+    // 3001 "Meeting does not exist" = not held yet, or Zoom hasn't made the report yet
+    notes.push(
+      e instanceof ZoomError && (e.code === 3001 || e.status === 404)
+        ? 'Attendance: Zoom has no report yet — the meeting hasn’t been held, or ended only a few minutes ago.'
+        : `Attendance: ${(e as Error).message}`,
+    )
   }
   const people = new Map<string, { name: string; email: string; join: string | null; leave: string | null; secs: number; sessions: number }>()
   for (const p of participants) {
@@ -353,9 +358,21 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
     if (acts.length) await admin.from('lead_activities').insert(acts)
   }
 
+  // Zoom's report can lag a few minutes after the end: with nothing back yet, the first pull is tried again
+  // on the next run (every 5 minutes) for up to 2 hours after the end
+  const endAt = Date.parse(
+    kind === 'meeting'
+      ? `${row.meeting_date}T${String(row.end_time).slice(0, 8)}+05:30`
+      : `${row.end_date ?? row.event_date}T${String(row.end_time ?? row.start_time ?? '23:00').slice(0, 8)}+05:30`,
+  )
+  const retry = !att.length && (row.zoom_pull_count ?? 0) === 0 && Date.now() - endAt < 2 * 3_600_000
   await admin
     .from(table)
-    .update({ zoom_pulled_at: new Date().toISOString(), zoom_pull_count: (row.zoom_pull_count ?? 0) + 1, zoom_error: notes.length && !att.length ? notes.join(' · ') : null })
+    .update({
+      zoom_pulled_at: new Date().toISOString(),
+      zoom_pull_count: retry ? 0 : (row.zoom_pull_count ?? 0) + 1,
+      zoom_error: notes.length && !att.length && !retry ? notes.join(' · ') : null,
+    })
     .eq('id', id)
   return { ok: true, attendees: att.length, questions: qaRows.length, chat: chatRows.length, chat_found: chatFound, notes }
 }
