@@ -13,6 +13,18 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.7',
+    date: '2026-10-28',
+    title: 'Smarter webhooks and workflows',
+    summary: 'Database and function changes for webhook actions, generated links and workflow conditions.',
+    new: [
+      'funnel_webhooks.action (create_lead / update_lead / create_meeting / purchase) and match_by (phone / email / both); webhook_submit does each one; lead_submissions.action / result (incl. no_match).',
+      'Field mapping: extra:<name>, Tags (private.tag_list); lead-webhook keeps lists as one field and flattens nested JSON.',
+      'short_links table and short_link_open(); workflow runner Generate link step (run variables kept in workflow_runs.state).',
+      'Workflow runner conditions on any lead / extra field, tags, meetings and payments; workflow_rerun().',
+    ],
+  },
+  {
     version: '0.6',
     date: '2026-10-26',
     title: 'Paid Podcast flow',
