@@ -6,7 +6,7 @@
 //
 // Steps done now: WhatsApp (approved template through WATI), Bulk WhatsApp (several templates, each a set
 // time after the run started, with an optional stop condition), Generate link (<app>/<code> for the lead,
-// kept for later steps as {{generated_link}}) and Wait. Email, Call, Wait for event and
+// kept for later steps as {{generated_link}}), Create Zoom meeting ({{zoom_link}}) and Wait. Email, Call, Wait for event and
 // Go to workflow are skipped (logged), Yes/No and Switch stop the run — they come later.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -138,6 +138,16 @@ async function advance(admin: SupabaseClient, run: Run) {
         state.vars = { ...(state.vars ?? {}), ...made.vars }
         Object.assign(ctx.vars, made.vars)
         note(n, 'ok', `Made ${made.short} → ${made.url}`)
+      } catch (e) {
+        note(n, 'failed', (e as Error).message)
+        return save({ status: 'failed', node_id: at, error: (e as Error).message })
+      }
+    } else if (n.type === 'zoom_meeting') {
+      try {
+        const made = await makeZoomMeeting(admin, run, d, ctx)
+        state.vars = { ...(state.vars ?? {}), ...made.vars }
+        Object.assign(ctx.vars, made.vars)
+        note(n, 'ok', `Zoom meeting ${made.id} on ${made.when}: ${made.vars.zoom_link}`)
       } catch (e) {
         note(n, 'failed', (e as Error).message)
         return save({ status: 'failed', node_id: at, error: (e as Error).message })
@@ -360,6 +370,35 @@ async function makeShortLink(admin: SupabaseClient, run: Run, d: Record<string, 
     if (!String(error.message).includes('duplicate')) throw new Error(error.message)
   }
   throw new Error('Could not make a unique link; try again.')
+}
+
+/** Create Zoom meeting step: on the picked Zoom account (or the default), at a fixed date-time or N days later at a time (India time) */
+async function makeZoomMeeting(admin: SupabaseClient, run: Run, d: Record<string, unknown>, ctx: Ctx) {
+  const time = /^\d{2}:\d{2}$/.test(String(d.time ?? '')) ? String(d.time) : '11:00'
+  let date: string
+  if (d.when === 'fixed') {
+    date = String(d.date ?? '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Pick the date of the Zoom meeting.')
+  } else {
+    const ist = new Date(Date.now() + 330 * 60_000 + Math.max(0, Number(d.days) || 0) * 86_400_000)
+    date = ist.toISOString().slice(0, 10)
+  }
+  const topic = fill(String(d.topic ?? '').trim() || 'Meeting with {{name}}', ctx.vars).trim() || 'Meeting'
+  const { data: secret } = await admin.rpc('workflow_cron_secret')
+  const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/zoom`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-cron-secret': String(secret ?? '') },
+    body: JSON.stringify({ action: 'create_adhoc', tenant_id: run.tenant_id, account: d.account || null, topic, start: `${date}T${time}`, duration: Number(d.duration) || 60 }),
+  })
+  const z = await res.json().catch(() => ({}))
+  if (!res.ok || !z.join_url) throw new Error(z.error ?? `Zoom error ${res.status}`)
+  if (run.lead_id && !run.is_test)
+    await admin.from('lead_activities').insert({ tenant_id: run.tenant_id, lead_id: run.lead_id, kind: 'note', note: `Zoom meeting created for ${date} ${time}: ${z.join_url}` })
+  return {
+    id: String(z.id),
+    when: `${date} ${time}`,
+    vars: { zoom_link: String(z.join_url), zoom_meeting_id: String(z.id), zoom_password: String(z.password ?? ''), zoom_date: date, zoom_time: time },
+  }
 }
 
 const fill = (s: string, vars: Record<string, string>) => s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => vars[k] ?? '')
