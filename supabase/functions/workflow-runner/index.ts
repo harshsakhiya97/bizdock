@@ -6,7 +6,7 @@
 //
 // Steps done now: WhatsApp (approved template through WATI), Bulk WhatsApp (several templates, each a set
 // time after the run started, with an optional stop condition), Generate link (<app>/<code> for the lead,
-// kept for later steps as {{generated_link}}), Create Zoom meeting ({{zoom_link}}) and Wait. Email, Call, Wait for event and
+// kept for later steps as {{generated_link}}), Create Zoom meeting ({{zoom_link}}, optionally as a short link) and Wait. Email, Call, Wait for event and
 // Go to workflow are skipped (logged), Yes/No and Switch stop the run — they come later.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -145,9 +145,12 @@ async function advance(admin: SupabaseClient, run: Run) {
     } else if (n.type === 'zoom_meeting') {
       try {
         const made = await makeZoomMeeting(admin, run, n, d, ctx)
-        state.vars = { ...(state.vars ?? {}), ...made.vars }
-        Object.assign(ctx.vars, made.vars)
-        note(n, 'ok', `Meeting on ${made.when}${made.host ? ` with ${made.host}` : ''} · Zoom ${made.id}: ${made.vars.zoom_link}`)
+        // the Zoom link as a short link too ({{generated_link}}, {{generated_link_code}})
+        const short = d.short_link ? await makeShortLink(admin, run, { url: made.vars.zoom_link, var: 'generated_link', base_url: d.base_url }, ctx) : null
+        const vars: Record<string, string> = { ...made.vars, ...(short?.vars ?? {}) }
+        state.vars = { ...(state.vars ?? {}), ...vars }
+        Object.assign(ctx.vars, vars)
+        note(n, 'ok', `Meeting on ${made.when}${made.host ? ` with ${made.host}` : ''} · Zoom ${made.id}: ${made.vars.zoom_link}${short ? ` · short link ${short.short}` : ''}`)
       } catch (e) {
         note(n, 'failed', (e as Error).message)
         return save({ status: 'failed', node_id: at, error: (e as Error).message })
