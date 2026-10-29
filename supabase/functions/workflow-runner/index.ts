@@ -395,11 +395,12 @@ const istParts = (t: number) => {
 const plusMinutes = (date: string, time: string, mins: number) => istParts(Date.parse(`${date}T${time}:00+05:30`) + mins * 60_000)
 
 /**
- * Create Zoom meeting step. When: the date-time the webhook sent (its start / end fields), or a fixed date /
- * N days later at a time (India time). For a lead it adds the meeting (with the team member: the lead's owner,
+ * Create Zoom meeting step. When: the date-time the webhook sent (its start / end fields), or the date and
+ * start / end time picked on the step (India time). For a lead it adds the meeting (with the team member: the lead's owner,
  * one person, or round robin) and creates its Zoom meeting; a test run only creates the Zoom meeting.
  */
 async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Record<string, unknown>, ctx: Ctx) {
+  // used only when no end time is known
   const duration = Math.max(15, Number(d.duration) || 60)
   let date: string
   let time: string
@@ -418,14 +419,15 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
     const t1 = d.end_var ? parseWhen(sent[String(d.end_var)]) : null
     ;({ date: endDate, time: endTime } = t1 != null && t1 > t0 ? istParts(t1) : istParts(t0 + duration * 60_000))
   } else {
+    // the date and the start / end time picked on the step
     time = /^\d{2}:\d{2}$/.test(String(d.time ?? '')) ? String(d.time) : '11:00'
-    if (d.when === 'fixed') {
-      date = String(d.date ?? '')
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Pick the date of the Zoom meeting.')
-    } else {
-      date = istParts(Date.now() + Math.max(0, Number(d.days) || 0) * 86_400_000).date
-    }
-    ;({ date: endDate, time: endTime } = plusMinutes(date, time, duration))
+    date = String(d.date ?? '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Pick the date of the Zoom meeting.')
+    const end = String(d.end_time ?? '')
+    if (/^\d{2}:\d{2}$/.test(end) && end > time) {
+      endDate = date
+      endTime = end
+    } else ({ date: endDate, time: endTime } = plusMinutes(date, time, duration))
   }
   // a meeting stays within its day
   if (endDate !== date || endTime <= time) endTime = '23:59'
