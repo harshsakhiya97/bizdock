@@ -439,6 +439,17 @@ const istParts = (t: number) => {
   const iso = new Date(t + 330 * 60_000).toISOString()
   return { date: iso.slice(0, 10), time: iso.slice(11, 16) }
 }
+/** "29 Oct 2026 5pm-8pm" (India time; "5:30pm" when not on the hour) */
+function whenText(date: string, start: string, end: string) {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const [y, mo, dd] = date.split('-').map(Number)
+  const t = (hm: string) => {
+    const [h, m] = hm.split(':').map(Number)
+    const h12 = h % 12 === 0 ? 12 : h % 12
+    return `${h12}${m ? `:${String(m).padStart(2, '0')}` : ''}${h < 12 ? 'am' : 'pm'}`
+  }
+  return `${dd} ${months[mo - 1]} ${y} ${t(start)}-${t(end)}`
+}
 const plusMinutes = (date: string, time: string, mins: number) => istParts(Date.parse(`${date}T${time}:00+05:30`) + mins * 60_000)
 
 /**
@@ -496,6 +507,7 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
     zoom_password: String(z.password ?? ''),
     zoom_date: date,
     zoom_time: time,
+    zoom_date_time: whenText(date, time, endTime),
   })
 
   // test run / no lead: only the Zoom meeting
