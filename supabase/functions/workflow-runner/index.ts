@@ -115,10 +115,11 @@ async function advance(admin: SupabaseClient, run: Run) {
         note(n, 'failed', (e as Error).message)
         return save({ status: 'failed', node_id: at, error: (e as Error).message })
       }
-      const sign = d.anchor && d.anchor !== 'start' && d.direction === 'before' ? -1 : 1
+      // each message's own before / after (older steps: the step's one setting); the start is always "after"
+      const sign = (r: Record<string, unknown>) => (d.anchor && d.anchor !== 'start' && (r.dir ?? d.direction) === 'before' ? -1 : 1)
       // messages in time order; each one is due this long before / after that moment
       const rows = ((d.rows ?? []) as Record<string, unknown>[])
-        .map((r, idx) => ({ r, idx, min: sign * (Number(r.amount) || 0) * ((UNIT_MS[String(r.unit)] ?? UNIT_MS.minutes) / 60_000) }))
+        .map((r, idx) => ({ r, idx, min: sign(r) * (Number(r.amount) || 0) * ((UNIT_MS[String(r.unit)] ?? UNIT_MS.minutes) / 60_000) }))
         .sort((a, b) => a.min - b.min || a.idx - b.idx)
       let k = state.bulk && state.bulk.node === n.id ? state.bulk.i : 0
       while (k < rows.length) {
