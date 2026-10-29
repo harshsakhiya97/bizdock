@@ -73,7 +73,7 @@ async function advance(admin: SupabaseClient, run: Run) {
   const save = (patch: Record<string, unknown>) =>
     admin.from('workflow_runs').update({ ...patch, log, state, updated_at: new Date().toISOString() }).eq('id', run.id)
 
-  const { data: wf } = await admin.from('workflows').select('id, name, is_active, archived_at, nodes, edges, funnel_id').eq('id', run.workflow_id).maybeSingle()
+  const { data: wf } = await admin.from('workflows').select('id, name, is_active, archived_at, nodes, edges, funnel_id, event_id').eq('id', run.workflow_id).maybeSingle()
   if (!wf) return save({ status: 'stopped', error: 'The workflow was deleted.' })
   if (wf.archived_at) return save({ status: 'stopped', error: 'The workflow was deleted.' })
   // a test run works while the workflow is off
@@ -107,11 +107,19 @@ async function advance(admin: SupabaseClient, run: Run) {
         return save({ status: 'failed', node_id: at, error: (e as Error).message })
       }
     } else if (n.type === 'bulk_whatsapp') {
-      // messages in time order; each one is due this long after the run started
+      // what the times count from (the run's start, the event, the lead's meeting or a date-time field), before or after it
+      let start: number
+      try {
+        start = await bulkBase(admin, run, wf as Record<string, unknown>, d, ctx)
+      } catch (e) {
+        note(n, 'failed', (e as Error).message)
+        return save({ status: 'failed', node_id: at, error: (e as Error).message })
+      }
+      const sign = d.anchor && d.anchor !== 'start' && d.direction === 'before' ? -1 : 1
+      // messages in time order; each one is due this long before / after that moment
       const rows = ((d.rows ?? []) as Record<string, unknown>[])
-        .map((r, idx) => ({ r, idx, min: (Number(r.amount) || 0) * ((UNIT_MS[String(r.unit)] ?? UNIT_MS.minutes) / 60_000) }))
+        .map((r, idx) => ({ r, idx, min: sign * (Number(r.amount) || 0) * ((UNIT_MS[String(r.unit)] ?? UNIT_MS.minutes) / 60_000) }))
         .sort((a, b) => a.min - b.min || a.idx - b.idx)
-      const start = new Date(run.created_at).getTime()
       let k = state.bulk && state.bulk.node === n.id ? state.bulk.i : 0
       while (k < rows.length) {
         if (d.stop_on && run.lead_id && !run.is_test && (await matches(admin, run.lead_id, d.stop as Cond))) {
@@ -518,6 +526,7 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
     zoom_date: date,
     zoom_time: time,
     zoom_date_time: whenText(date, time, endTime),
+    zoom_start: `${date} ${time}`,
   })
 
   // test run / no lead: only the Zoom meeting
@@ -564,6 +573,45 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
     note: `Meeting booked by workflow for ${date} ${time}${hostName ? ` · with ${hostName}` : ''} · Zoom ${z.join_url}`,
   })
   return { id: String(z.id), when: `${date} ${time}`, host: hostName, vars: vars(z) }
+}
+
+/** Bulk WhatsApp: the moment its times count from */
+async function bulkBase(admin: SupabaseClient, run: Run, wf: Record<string, unknown>, d: Record<string, unknown>, ctx: Ctx): Promise<number> {
+  const ist = (date: string, time: string | null) => Date.parse(`${date}T${(time ?? '00:00').slice(0, 5)}:00+05:30`)
+  if (d.anchor === 'event') {
+    let eventId = (wf.event_id as string | null) ?? null
+    if (!eventId && wf.funnel_id) {
+      const { data: f } = await admin.from('funnels').select('event_id').eq('id', wf.funnel_id).maybeSingle()
+      eventId = f?.event_id ?? null
+    }
+    const { data: ev } = eventId ? await admin.from('events').select('event_date, start_time').eq('id', eventId).maybeSingle() : { data: null }
+    if (!ev?.event_date) throw new Error('This workflow has no webinar / event to count the times from.')
+    return ist(ev.event_date, ev.start_time)
+  }
+  if (d.anchor === 'meeting') {
+    const { data: m } = run.lead_id
+      ? await admin.from('meetings').select('meeting_date, start_time').eq('lead_id', run.lead_id).neq('status', 'cancelled').order('created_at', { ascending: false }).limit(1).maybeSingle()
+      : { data: null }
+    if (!m?.meeting_date) throw new Error(run.lead_id ? 'The lead has no meeting to count the times from.' : 'No lead, so no meeting to count the times from (pick a field instead).')
+    return ist(m.meeting_date, m.start_time)
+  }
+  if (d.anchor === 'var') {
+    const key = String(d.anchor_var ?? '')
+    let raw: unknown = ctx.vars[key]
+    if (raw == null || raw === '') {
+      // a webhook field kept on the submission
+      let sent: Record<string, unknown> = (run.is_test ? run.test_data : run.payload) ?? {}
+      if (!run.is_test && !run.payload && run.submission_id) {
+        const { data: sub } = await admin.from('lead_submissions').select('data').eq('id', run.submission_id).maybeSingle()
+        sent = (sub?.data ?? {}) as Record<string, unknown>
+      }
+      raw = sent[key] ?? Object.entries(sent).find(([k]) => varKey(k) === key)?.[1]
+    }
+    const t = parseWhen(raw)
+    if (t == null) throw new Error(`"${key}" has no readable date-time to count the times from${raw ? ` (got "${String(raw).slice(0, 40)}")` : ''}.`)
+    return t
+  }
+  return new Date(run.created_at).getTime()
 }
 
 const fill = (s: string, vars: Record<string, string>) => s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => vars[k] ?? '')
