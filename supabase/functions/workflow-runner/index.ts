@@ -187,11 +187,12 @@ async function advance(admin: SupabaseClient, run: Run) {
           .filter((f) => varKey(String(f.name ?? '')))
           .map((f) => [varKey(String(f.name)), fill(String(f.value ?? ''), ctx.vars)]),
       )
-      const carried = run.is_test ? null : { ...(run.payload ?? {}), ...pass }
+      // only the fields picked on the step go to the next workflow
+      const carried = run.is_test ? null : pass
       // the next workflow's own webhook: waiting for a test → this hand-over is its test (the run doesn't start);
       // no test yet → it becomes the sample, so its builder shows the passed fields
       const { data: hook } = await admin.from('workflow_hooks').select('id, test_mode_until, sample_at').eq('workflow_id', next.id).maybeSingle()
-      const sample = { ...(run.is_test ? (run.test_data ?? {}) : (run.payload ?? {})), ...pass }
+      const sample = pass
       if (hook && hook.test_mode_until && Date.parse(hook.test_mode_until) > Date.now()) {
         await admin.from('workflow_hooks').update({ sample, sample_at: new Date().toISOString(), test_mode_until: null }).eq('id', hook.id)
         note(n, 'ok', `"${next.name}" was waiting for a test: these fields are its test now (${Object.keys(pass).join(', ') || 'none'}); it doesn't run this time`)
@@ -203,7 +204,7 @@ async function advance(admin: SupabaseClient, run: Run) {
         workflow_id: next.id,
         lead_id: run.lead_id,
         is_test: run.is_test,
-        test_data: run.is_test ? { ...(run.test_data ?? {}), ...pass } : null,
+        test_data: run.is_test ? pass : null,
         payload: carried && Object.keys(carried).length ? carried : null,
         state: { hops },
       })
