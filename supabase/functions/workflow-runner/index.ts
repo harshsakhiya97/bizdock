@@ -25,6 +25,8 @@ type Run = {
   /** started by hand with typed-in details (Test run) */
   is_test: boolean
   test_data: Record<string, string> | null
+  /** started by a post to the workflow's own webhook: the post's fields (no lead) */
+  payload: Record<string, unknown> | null
   created_at: string
   /** progress inside a step that runs over time */
   state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string> } | null
@@ -282,19 +284,19 @@ async function matches(admin: SupabaseClient, leadId: string, raw: Cond | undefi
 type Ctx = { vars: Record<string, string>; leadPhone: string | null; tenantId: string }
 
 async function context(admin: SupabaseClient, run: Run, workflowFunnel: string | null): Promise<Ctx> {
-  if (run.is_test) {
-    // test run: the typed-in details, with the workflow's funnel and business
-    const t = run.test_data ?? {}
+  if (run.is_test || run.payload) {
+    // test run: the typed-in details; webhook run: the post's fields — with the workflow's funnel and business
+    const t = (run.is_test ? run.test_data : run.payload) ?? {}
     const { data: f } = workflowFunnel ? await admin.from('funnels').select('name, business_id').eq('id', workflowFunnel).maybeSingle() : { data: null }
     const { data: b } = f?.business_id ? await admin.from('businesses').select('name').eq('id', f.business_id).maybeSingle() : { data: null }
     const name = String(t.name ?? '').trim()
     const extra = extraVars(t)
     return {
       tenantId: run.tenant_id,
-      leadPhone: t.phone ?? null,
+      leadPhone: t.phone == null || t.phone === '' ? null : String(t.phone),
       vars: {
         ...extra,
-        first_name: name.split(/\s+/)[0] ?? '',
+        first_name: String(t.first_name ?? '').trim() || (name.split(/\s+/)[0] ?? ''),
         name,
         phone: String(t.phone ?? ''),
         email: String(t.email ?? ''),
@@ -410,8 +412,8 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
   let endDate: string
   let endTime: string
   if (d.use_webhook) {
-    let sent: Record<string, unknown> = run.test_data ?? {}
-    if (!run.is_test && run.submission_id) {
+    let sent: Record<string, unknown> = (run.is_test ? run.test_data : run.payload) ?? {}
+    if (!run.is_test && !run.payload && run.submission_id) {
       const { data: sub } = await admin.from('lead_submissions').select('data').eq('id', run.submission_id).maybeSingle()
       sent = (sub?.data ?? {}) as Record<string, unknown>
     }
