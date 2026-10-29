@@ -144,10 +144,10 @@ async function advance(admin: SupabaseClient, run: Run) {
       }
     } else if (n.type === 'zoom_meeting') {
       try {
-        const made = await makeZoomMeeting(admin, run, d, ctx)
+        const made = await makeZoomMeeting(admin, run, n, d, ctx)
         state.vars = { ...(state.vars ?? {}), ...made.vars }
         Object.assign(ctx.vars, made.vars)
-        note(n, 'ok', `Zoom meeting ${made.id} on ${made.when}: ${made.vars.zoom_link}`)
+        note(n, 'ok', `Meeting on ${made.when}${made.host ? ` with ${made.host}` : ''} · Zoom ${made.id}: ${made.vars.zoom_link}`)
       } catch (e) {
         note(n, 'failed', (e as Error).message)
         return save({ status: 'failed', node_id: at, error: (e as Error).message })
@@ -372,33 +372,127 @@ async function makeShortLink(admin: SupabaseClient, run: Run, d: Record<string, 
   throw new Error('Could not make a unique link; try again.')
 }
 
-/** Create Zoom meeting step: on the picked Zoom account (or the default), at a fixed date-time or N days later at a time (India time) */
-async function makeZoomMeeting(admin: SupabaseClient, run: Run, d: Record<string, unknown>, ctx: Ctx) {
-  const time = /^\d{2}:\d{2}$/.test(String(d.time ?? '')) ? String(d.time) : '11:00'
-  let date: string
-  if (d.when === 'fixed') {
-    date = String(d.date ?? '')
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Pick the date of the Zoom meeting.')
-  } else {
-    const ist = new Date(Date.now() + 330 * 60_000 + Math.max(0, Number(d.days) || 0) * 86_400_000)
-    date = ist.toISOString().slice(0, 10)
+/** a date-time a form / booking tool sent: ISO with a zone, "2026-11-02 16:00" (India time), or epoch s / ms */
+function parseWhen(raw: unknown): number | null {
+  const v = String(raw ?? '').trim()
+  if (!v) return null
+  if (/^\d{12,}$/.test(v)) return Number(v)
+  if (/^\d{9,11}$/.test(v)) return Number(v) * 1000
+  if (/(Z|z|[+-]\d\d:?\d\d)$/.test(v)) {
+    const t = Date.parse(v.replace(' ', 'T'))
+    return Number.isNaN(t) ? null : t
   }
+  const m = v.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/)
+  if (!m) return null
+  const t = Date.parse(`${m[1]}T${m[2].padStart(2, '0')}:${m[3]}:${m[4] ?? '00'}+05:30`)
+  return Number.isNaN(t) ? null : t
+}
+/** India date + HH:MM of a moment */
+const istParts = (t: number) => {
+  const iso = new Date(t + 330 * 60_000).toISOString()
+  return { date: iso.slice(0, 10), time: iso.slice(11, 16) }
+}
+const plusMinutes = (date: string, time: string, mins: number) => istParts(Date.parse(`${date}T${time}:00+05:30`) + mins * 60_000)
+
+/**
+ * Create Zoom meeting step. When: the date-time the webhook sent (its start / end fields), or a fixed date /
+ * N days later at a time (India time). For a lead it adds the meeting (with the team member: the lead's owner,
+ * one person, or round robin) and creates its Zoom meeting; a test run only creates the Zoom meeting.
+ */
+async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Record<string, unknown>, ctx: Ctx) {
+  const duration = Math.max(15, Number(d.duration) || 60)
+  let date: string
+  let time: string
+  let endDate: string
+  let endTime: string
+  if (d.use_webhook) {
+    let sent: Record<string, unknown> = run.test_data ?? {}
+    if (!run.is_test && run.submission_id) {
+      const { data: sub } = await admin.from('lead_submissions').select('data').eq('id', run.submission_id).maybeSingle()
+      sent = (sub?.data ?? {}) as Record<string, unknown>
+    }
+    const startKey = String(d.start_var || 'meeting_start')
+    const t0 = parseWhen(sent[startKey])
+    if (t0 == null) throw new Error(`The webhook didn't send a readable date-time in "${startKey}".`)
+    ;({ date, time } = istParts(t0))
+    const t1 = d.end_var ? parseWhen(sent[String(d.end_var)]) : null
+    ;({ date: endDate, time: endTime } = t1 != null && t1 > t0 ? istParts(t1) : istParts(t0 + duration * 60_000))
+  } else {
+    time = /^\d{2}:\d{2}$/.test(String(d.time ?? '')) ? String(d.time) : '11:00'
+    if (d.when === 'fixed') {
+      date = String(d.date ?? '')
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Pick the date of the Zoom meeting.')
+    } else {
+      date = istParts(Date.now() + Math.max(0, Number(d.days) || 0) * 86_400_000).date
+    }
+    ;({ date: endDate, time: endTime } = plusMinutes(date, time, duration))
+  }
+  // a meeting stays within its day
+  if (endDate !== date || endTime <= time) endTime = '23:59'
   const topic = fill(String(d.topic ?? '').trim() || 'Meeting with {{name}}', ctx.vars).trim() || 'Meeting'
   const { data: secret } = await admin.rpc('workflow_cron_secret')
-  const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/zoom`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-cron-secret': String(secret ?? '') },
-    body: JSON.stringify({ action: 'create_adhoc', tenant_id: run.tenant_id, account: d.account || null, topic, start: `${date}T${time}`, duration: Number(d.duration) || 60 }),
-  })
-  const z = await res.json().catch(() => ({}))
-  if (!res.ok || !z.join_url) throw new Error(z.error ?? `Zoom error ${res.status}`)
-  if (run.lead_id && !run.is_test)
-    await admin.from('lead_activities').insert({ tenant_id: run.tenant_id, lead_id: run.lead_id, kind: 'note', note: `Zoom meeting created for ${date} ${time}: ${z.join_url}` })
-  return {
-    id: String(z.id),
-    when: `${date} ${time}`,
-    vars: { zoom_link: String(z.join_url), zoom_meeting_id: String(z.id), zoom_password: String(z.password ?? ''), zoom_date: date, zoom_time: time },
+  const callZoom = async (body: Record<string, unknown>) => {
+    const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/zoom`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-cron-secret': String(secret ?? '') },
+      body: JSON.stringify(body),
+    })
+    const z = await res.json().catch(() => ({}))
+    if (!res.ok || !z.join_url) throw new Error(z.error ?? `Zoom error ${res.status}`)
+    return z as { id: string; join_url: string; password?: string }
   }
+  const vars = (z: { id: string; join_url: string; password?: string }) => ({
+    zoom_link: String(z.join_url),
+    zoom_meeting_id: String(z.id),
+    zoom_password: String(z.password ?? ''),
+    zoom_date: date,
+    zoom_time: time,
+  })
+
+  // test run / no lead: only the Zoom meeting
+  if (!run.lead_id || run.is_test) {
+    const mins = Math.max(15, (Date.parse(`${date}T${endTime}:00+05:30`) - Date.parse(`${date}T${time}:00+05:30`)) / 60_000)
+    const z = await callZoom({ action: 'create_adhoc', tenant_id: run.tenant_id, account: d.account || null, topic, start: `${date}T${time}`, duration: mins })
+    return { id: String(z.id), when: `${date} ${time}`, host: null as string | null, vars: vars(z) }
+  }
+
+  // who takes it
+  const { data: lead } = await admin.from('leads').select('id, tenant_id, business_id, sub_business_id, funnel_id, owner_id').eq('id', run.lead_id).maybeSingle()
+  if (!lead) throw new Error('The lead was deleted.')
+  let host: string | null = null
+  if (d.meet_mode === 'single' || d.meet_mode === 'round_robin') {
+    const picked = ((d.meet_members ?? []) as string[]).filter(Boolean)
+    const { data: act } = picked.length ? await admin.from('tenant_members').select('id').in('id', picked).eq('status', 'active') : { data: [] }
+    const ok = new Set((act ?? []).map((m) => m.id as string))
+    const pool = picked.filter((id) => ok.has(id))
+    if (pool.length && d.meet_mode === 'single') host = pool[0]
+    else if (pool.length) {
+      const { data: turn } = await admin.rpc('workflow_next_turn', { p_workflow: run.workflow_id, p_node: n.id })
+      host = pool[((Number(turn) || 1) - 1) % pool.length]
+    }
+  } else host = lead.owner_id ?? null
+  let sub = lead.sub_business_id
+  if (!sub && lead.funnel_id) {
+    const { data: f } = await admin.from('funnels').select('sub_business_id').eq('id', lead.funnel_id).maybeSingle()
+    sub = f?.sub_business_id ?? null
+  }
+
+  const { data: m, error } = await admin
+    .from('meetings')
+    .insert({ tenant_id: run.tenant_id, business_id: lead.business_id, sub_business_id: sub, lead_id: lead.id, meeting_date: date, start_time: time, end_time: endTime, mode: 'online', assigned_to: host })
+    .select('id')
+    .single()
+  if (error) throw new Error(`Could not add the meeting: ${error.message}`)
+  const z = await callZoom({ action: 'book_meeting', meeting_id: m.id, account: d.account || null, topic })
+  const { data: who } = host ? await admin.from('tenant_members').select('profiles(full_name)').eq('id', host).maybeSingle() : { data: null }
+  const hostName = ((who as { profiles?: { full_name?: string } } | null)?.profiles?.full_name ?? null) as string | null
+  await admin.from('lead_activities').insert({
+    tenant_id: run.tenant_id,
+    lead_id: lead.id,
+    kind: 'note',
+    note: `Meeting booked by workflow for ${date} ${time}${hostName ? ` · with ${hostName}` : ''} · Zoom ${z.join_url}`,
+  })
+  return { id: String(z.id), when: `${date} ${time}`, host: hostName, vars: vars(z) }
 }
 
 const fill = (s: string, vars: Record<string, string>) => s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => vars[k] ?? '')

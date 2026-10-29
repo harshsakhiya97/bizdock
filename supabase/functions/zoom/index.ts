@@ -4,7 +4,8 @@
 //   { action: 'sync', kind: 'meeting' | 'event', id }       create / move the Zoom meeting (or webinar) of a CRM meeting / calendar event
 //   { action: 'delete', account, zoom_id, kind, clear?, clear_event? }   remove it from Zoom (and clear it on the row)
 //   { action: 'cron' }                                        pull attendance / Q&A / chat for everything that has ended
-//   { action: 'create_adhoc', tenant_id, account?, topic, start, duration }   workflow step → { id, join_url, password, start_url }
+//   { action: 'create_adhoc', tenant_id, account?, topic, start, duration }   workflow step (no lead) → { id, join_url, password, start_url }
+//   { action: 'book_meeting', meeting_id, account?, topic? }  workflow step: the Zoom meeting of a CRM meeting it just added
 // From the app (the caller's login decides what they may do):
 //   { action: 'test', id }                                    check an account's keys (Settings & integrations)
 //   { action: 'pull', kind, id }                              fetch attendance / comments now
@@ -144,6 +145,14 @@ async function loadAccount(admin: SupabaseClient, id: unknown): Promise<Account 
   const { data } = await admin.from('integrations').select('*').eq('id', String(id)).eq('provider', 'zoom').maybeSingle()
   if (!data || !data.is_enabled) return null
   return toAccount(data)
+}
+
+/** the workspace's default Zoom account (else the first one switched on) */
+async function defaultAccount(admin: SupabaseClient, tenantId: string): Promise<Account | null> {
+  const { data } = await admin.from('integrations').select('*').eq('tenant_id', tenantId).eq('provider', 'zoom').eq('is_enabled', true).order('connected_at')
+  const rows = (data ?? []) as Row[]
+  const pick = rows.find((r) => (r.config as Record<string, string>)?.is_default === 'Yes') ?? rows[0]
+  return pick ? toAccount(pick) : null
 }
 
 async function syncMeeting(admin: SupabaseClient, id: string) {
@@ -410,14 +419,28 @@ Deno.serve(async (req) => {
       }
       return json({ done })
     }
+    if (action === 'book_meeting') {
+      const { data: m } = await admin.from('meetings').select('*, lead:leads(first_name, last_name)').eq('id', String(b.meeting_id)).maybeSingle()
+      if (!m) return fail('Meeting not found.')
+      let acc: Account | null = await loadAccount(admin, b.account)
+      if (!acc) acc = await defaultAccount(admin, m.tenant_id)
+      if (!acc || acc.tenant_id !== m.tenant_id) return fail('No Zoom account switched on. Add one in System Connections.')
+      const who = [m.lead?.first_name, m.lead?.last_name].filter(Boolean).join(' ') || 'guest'
+      try {
+        const z = await upsertZoom(acc, 'meeting', null, String(b.topic || `Meeting with ${who}`), m.meeting_date, m.start_time, m.end_time)
+        await admin
+          .from('meetings')
+          .update({ zoom_account_id: acc.id, zoom_meeting_id: z.id, link: z.join_url, zoom_start_url: z.start_url, zoom_password: z.password, zoom_error: null })
+          .eq('id', m.id)
+        return json(z)
+      } catch (e) {
+        await admin.from('meetings').update({ zoom_account_id: acc.id, zoom_error: (e as Error).message }).eq('id', m.id)
+        return fail((e as Error).message)
+      }
+    }
     if (action === 'create_adhoc') {
       let acc: Account | null = await loadAccount(admin, b.account)
-      if (!acc) {
-        const { data } = await admin.from('integrations').select('*').eq('tenant_id', String(b.tenant_id)).eq('provider', 'zoom').eq('is_enabled', true).order('connected_at')
-        const rows = (data ?? []) as Row[]
-        const pick = rows.find((r) => (r.config as Record<string, string>)?.is_default === 'Yes') ?? rows[0]
-        acc = pick ? toAccount(pick) : null
-      }
+      if (!acc) acc = await defaultAccount(admin, String(b.tenant_id))
       if (!acc || acc.tenant_id !== b.tenant_id) return fail('No Zoom account switched on. Add one in System Connections.')
       const start = String(b.start ?? '') // "2026-11-02T16:00"
       const date = start.slice(0, 10)
