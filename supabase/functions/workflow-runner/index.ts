@@ -6,8 +6,9 @@
 //
 // Steps done now: WhatsApp (approved template through WATI), Bulk WhatsApp (several templates, each a set
 // time after the run started, with an optional stop condition), Generate link (<app>/<code> for the lead,
-// kept for later steps as {{generated_link}}), Create Zoom meeting ({{zoom_link}}, optionally as a short link) and Wait. Email, Call, Wait for event and
-// Go to workflow are skipped (logged), Yes/No and Switch stop the run — they come later.
+// kept for later steps as {{generated_link}}), Create Zoom meeting ({{zoom_link}}, optionally as a short link), Wait and
+// Go to workflow (with fields passed as the next workflow's variables). Email, Call and Wait for event are skipped
+// (logged), Yes/No and Switch stop the run — they come later.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -29,7 +30,7 @@ type Run = {
   payload: Record<string, unknown> | null
   created_at: string
   /** progress inside a step that runs over time */
-  state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string> } | null
+  state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string>; hops?: number } | null
 }
 type LogLine = { at: string; node_id: string; kind: string; status: 'ok' | 'skipped' | 'failed' | 'waiting' | 'stopped'; detail: string }
 
@@ -157,6 +158,44 @@ async function advance(admin: SupabaseClient, run: Run) {
         note(n, 'failed', (e as Error).message)
         return save({ status: 'failed', node_id: at, error: (e as Error).message })
       }
+    } else if (n.type === 'goto') {
+      // continue in another workflow (from its first step), passing the step's fields as its variables
+      const target = String(d.workflow_id ?? '')
+      const { data: next } = target
+        ? await admin.from('workflows').select('id, name').eq('id', target).eq('tenant_id', run.tenant_id).is('archived_at', null).maybeSingle()
+        : { data: null }
+      if (!next || target === run.workflow_id) {
+        const why = !target ? 'No workflow picked.' : target === run.workflow_id ? 'A workflow can’t go to itself.' : 'The workflow to go to was deleted.'
+        note(n, 'failed', why)
+        return save({ status: 'failed', node_id: at, error: why })
+      }
+      const hops = (state.hops ?? 0) + 1
+      if (hops > 10) {
+        note(n, 'failed', 'Stopped: more than 10 “Go to workflow” in a row (a loop?).')
+        return save({ status: 'failed', node_id: at, error: 'Too many Go to workflow steps in a row.' })
+      }
+      const pass = Object.fromEntries(
+        ((d.fields ?? []) as { name?: string; value?: string }[])
+          .filter((f) => varKey(String(f.name ?? '')))
+          .map((f) => [varKey(String(f.name)), fill(String(f.value ?? ''), ctx.vars)]),
+      )
+      const carried = run.is_test ? null : { ...(run.payload ?? {}), ...pass }
+      const { error: insErr } = await admin.from('workflow_runs').insert({
+        tenant_id: run.tenant_id,
+        workflow_id: next.id,
+        lead_id: run.lead_id,
+        is_test: run.is_test,
+        test_data: run.is_test ? { ...(run.test_data ?? {}), ...pass } : null,
+        payload: carried && Object.keys(carried).length ? carried : null,
+        state: { hops },
+      })
+      if (insErr) {
+        note(n, 'failed', insErr.message)
+        return save({ status: 'failed', node_id: at, error: insErr.message })
+      }
+      const names = Object.keys(pass)
+      note(n, 'ok', `Went to "${next.name}"${names.length ? ` · passed ${names.join(', ')}` : ''}`)
+      return save({ status: 'done', node_id: n.id, error: null })
     } else if (n.type === 'wait') {
       const ms = Math.max(1, Number(d.amount) || 1) * (UNIT_MS[String(d.unit)] ?? UNIT_MS.days)
       const until = new Date(Date.now() + ms)
@@ -284,7 +323,7 @@ async function matches(admin: SupabaseClient, leadId: string, raw: Cond | undefi
 type Ctx = { vars: Record<string, string>; leadPhone: string | null; tenantId: string }
 
 async function context(admin: SupabaseClient, run: Run, workflowFunnel: string | null): Promise<Ctx> {
-  if (run.is_test || run.payload) {
+  if (run.is_test || (run.payload && !run.lead_id)) {
     // test run: the typed-in details; webhook run: the post's fields — with the workflow's funnel and business
     const t = (run.is_test ? run.test_data : run.payload) ?? {}
     const { data: f } = workflowFunnel ? await admin.from('funnels').select('name, business_id').eq('id', workflowFunnel).maybeSingle() : { data: null }
@@ -320,6 +359,8 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
     lead?.landing_page_id ? admin.from('landing_pages').select('name').eq('id', lead.landing_page_id).maybeSingle() : Promise.resolve({ data: null }),
   ])
   const first = (lead?.first_name ?? '').trim()
+  // fields passed by a "Go to workflow" step (on top of the lead's own)
+  const passed = extraVars(run.payload)
   return {
     tenantId: run.tenant_id,
     leadPhone: lead ? lead.whatsapp || lead.phone : null,
@@ -339,6 +380,7 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
       event_date: '',
       event_time: '',
       event_link: '',
+      ...passed,
     },
   }
 }
