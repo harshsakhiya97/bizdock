@@ -180,6 +180,16 @@ async function advance(admin: SupabaseClient, run: Run) {
           .map((f) => [varKey(String(f.name)), fill(String(f.value ?? ''), ctx.vars)]),
       )
       const carried = run.is_test ? null : { ...(run.payload ?? {}), ...pass }
+      // the next workflow's own webhook: waiting for a test → this hand-over is its test (the run doesn't start);
+      // no test yet → it becomes the sample, so its builder shows the passed fields
+      const { data: hook } = await admin.from('workflow_hooks').select('id, test_mode_until, sample_at').eq('workflow_id', next.id).maybeSingle()
+      const sample = { ...(run.is_test ? (run.test_data ?? {}) : (run.payload ?? {})), ...pass }
+      if (hook && hook.test_mode_until && Date.parse(hook.test_mode_until) > Date.now()) {
+        await admin.from('workflow_hooks').update({ sample, sample_at: new Date().toISOString(), test_mode_until: null }).eq('id', hook.id)
+        note(n, 'ok', `"${next.name}" was waiting for a test: these fields are its test now (${Object.keys(pass).join(', ') || 'none'}); it doesn't run this time`)
+        return save({ status: 'done', node_id: n.id, error: null })
+      }
+      if (hook && !hook.sample_at) await admin.from('workflow_hooks').update({ sample, sample_at: new Date().toISOString() }).eq('id', hook.id)
       const { error: insErr } = await admin.from('workflow_runs').insert({
         tenant_id: run.tenant_id,
         workflow_id: next.id,
