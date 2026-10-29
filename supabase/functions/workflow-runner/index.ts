@@ -145,8 +145,8 @@ async function advance(admin: SupabaseClient, run: Run) {
     } else if (n.type === 'zoom_meeting') {
       try {
         const made = await makeZoomMeeting(admin, run, n, d, ctx)
-        // the Zoom link as a short link too ({{generated_link}}, {{generated_link_code}})
-        const short = d.short_link ? await makeShortLink(admin, run, { url: made.vars.zoom_link, var: 'generated_link', base_url: d.base_url }, ctx) : null
+        // the Zoom link (with its passcode) as a short link too ({{zoom_short_link}}, {{zoom_short_link_code}})
+        const short = d.short_link ? await makeShortLink(admin, run, { url: made.vars.zoom_link, var: 'zoom_short_link', base_url: d.base_url }, ctx) : null
         const vars: Record<string, string> = { ...made.vars, ...(short?.vars ?? {}) }
         state.vars = { ...(state.vars ?? {}), ...vars }
         Object.assign(ctx.vars, vars)
