@@ -437,7 +437,9 @@ async function makeShortLink(admin: SupabaseClient, run: Run, d: Record<string, 
     })
     if (!error) {
       const short = base ? `${base}/${code}` : code
-      return { short, url, vars: { [key]: short, [`${key}_code`]: code } }
+      // also the filled-in URL itself: whole, and only its parameters (after "?")
+      const q = url.indexOf('?')
+      return { short, url, vars: { [key]: short, [`${key}_code`]: code, [`${key}_full_url`]: url, [`${key}_parameters`]: q < 0 ? '' : url.slice(q + 1) } }
     }
     if (!String(error.message).includes('duplicate')) throw new Error(error.message)
   }
