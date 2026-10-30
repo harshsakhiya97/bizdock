@@ -6,9 +6,9 @@
 //
 // Steps done now: WhatsApp (approved template through WATI), Bulk WhatsApp (several templates, each a set
 // time after the run started, with an optional stop condition), Generate link (<app>/<code> for the lead,
-// kept for later steps as {{generated_link}}), Create Zoom meeting ({{zoom_link}}, optionally as a short link), Wait and
-// Go to workflow (with fields passed as the next workflow's variables). Email, Call and Wait for event are skipped
-// (logged), Yes/No and Switch stop the run — they come later.
+// kept for later steps as {{generated_link}}), Create Zoom meeting ({{zoom_link}}, optionally as a short link), Wait,
+// Switch / Yes-No and Go to workflow (with fields passed as the next workflow's variables). Email, Call and Wait for
+// event are skipped (logged) — they come later.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -97,9 +97,12 @@ async function advance(admin: SupabaseClient, run: Run) {
   let at = run.node_id
   // waiting inside a Bulk WhatsApp step: carry on with that step
   let resume = byId.get(at)?.type === 'bulk_whatsapp' && state.bulk?.node === at
+  // a Switch / Yes-No step picks the next step itself
+  let jump: Node | null | undefined
   for (let i = 0; i < MAX_STEPS; i++) {
-    const n = resume ? byId.get(at)! : nextOf(at)
+    const n = resume ? byId.get(at)! : jump !== undefined ? jump : nextOf(at)
     resume = false
+    jump = undefined
     if (!n) return save({ status: 'done', node_id: at, error: null })
     const d = n.data ?? {}
 
@@ -227,8 +230,24 @@ async function advance(admin: SupabaseClient, run: Run) {
       note(n, 'waiting', `Waiting until ${until.toISOString()}`)
       return save({ status: 'waiting', node_id: n.id, next_at: until.toISOString() })
     } else if (n.type === 'condition' || n.type === 'switch') {
-      note(n, 'stopped', 'Yes / No and Switch steps are not running yet.')
-      return save({ status: 'stopped', node_id: n.id, error: 'Reached a Switch step (not running yet).' })
+      // Switch: the first path whose condition the lead matches (checked top to bottom); Yes / No: yes or no.
+      // A path with no line, or no path matching, ends the workflow here.
+      const cases = n.type === 'switch' ? ((d.cases ?? []) as (Cond & { id: string; label?: string })[]) : [{ ...(d as unknown as Cond), id: 'yes', label: 'Yes' }]
+      let hit: { id: string; label: string } | null = null
+      for (const [ci, c] of cases.entries()) {
+        if (run.lead_id && (await matches(admin, run.lead_id, c))) {
+          hit = { id: c.id, label: String(c.label ?? '').trim() || `Path ${ci + 1}` }
+          break
+        }
+      }
+      if (!hit && n.type === 'condition') hit = { id: 'no', label: 'No' }
+      const edge = hit ? edges.find((e) => e.source === n.id && e.sourceHandle === hit!.id) : null
+      if (!hit || !edge) {
+        note(n, 'ok', !run.lead_id ? 'No lead to check: the workflow ends here.' : hit ? `Went down “${hit.label}”; it has no next step, so the workflow ends here.` : 'The lead matched no path: the workflow ends here.')
+        return save({ status: 'done', node_id: n.id, error: null })
+      }
+      note(n, 'ok', `Went down “${hit.label}”`)
+      jump = byId.get(edge.target) ?? null
     } else {
       note(n, 'skipped', `${n.type} steps are not running yet.`)
     }
