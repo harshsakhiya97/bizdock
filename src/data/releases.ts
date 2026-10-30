@@ -23,6 +23,7 @@ export const releases: Release[] = [
       'workflow_turns and workflow_next_turn() for round robin in the Create Zoom meeting step.',
       'Workflow runner: Create Zoom meeting step, Go to workflow (passes only its fields; fills the next workflow’s hook test / sample), Bulk WhatsApp anchor (start or a field) with before / after per message.',
       'ingest_lead: purpose saved on the lead; a field mapped to lead_source sets source_id by name (added to lead_sources when new).',
+      'Workflow runner: Switch / Yes-No steps run (first matching path; none ends the run); conditions in / starts / ends; {{submitted_at}}; Generate link {{x_full_url}} / {{x_parameters}}.',
     ],
     improved: [
       'Meeting webhook (create_meeting) only logs the submission and a note.',
