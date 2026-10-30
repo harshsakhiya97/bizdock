@@ -89,6 +89,11 @@ async function advance(admin: SupabaseClient, run: Run) {
   const ctx = await context(admin, run, (wf.funnel_id as string | null) ?? null)
   // values made by earlier steps of this run (generated links)
   Object.assign(ctx.vars, state.vars ?? {})
+  // when this workflow started (the form post / trigger), India time: "2026-10-30 10:59"
+  if (!ctx.vars.submitted_at) {
+    const p = istParts(Date.parse(run.created_at))
+    ctx.vars.submitted_at = `${p.date} ${p.time}`
+  }
   let at = run.node_id
   // waiting inside a Bulk WhatsApp step: carry on with that step
   let resume = byId.get(at)?.type === 'bulk_whatsapp' && state.bulk?.node === at
