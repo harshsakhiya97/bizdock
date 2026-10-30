@@ -333,6 +333,25 @@ async function matches(admin: SupabaseClient, leadId: string, raw: Cond | undefi
 
   if (op === 'empty') return v === ''
   if (op === 'not_empty') return v !== ''
+  // includes any of (one per line) / starts with / ends with — text without case; picked choices (stage, source…) by id
+  if (op === 'in' || op === 'starts' || op === 'ends') {
+    const picked = ['stage', 'source', 'owner', 'temperature', 'landing_page'].includes(c.field)
+    const vals = (op === 'in' ? want.split('\n') : [want]).map((x) => x.trim()).filter(Boolean)
+    if (!vals.length) return false
+    if (picked) {
+      const mine = c.field === 'landing_page' ? [String(lead.webhook_id ?? ''), String(lead.landing_page_id ?? '')] : [v]
+      return vals.some((x) => mine.includes(x))
+    }
+    const low = v.toLowerCase()
+    if (c.field === 'phone') {
+      const digits = v.replace(/\D/g, '')
+      return vals.some((x) => {
+        const d = x.replace(/\D/g, '')
+        return op === 'in' ? digits.slice(-10) === d.slice(-10) || digits.includes(d) : op === 'starts' ? digits.startsWith(d) || v.startsWith(x) : digits.endsWith(d)
+      })
+    }
+    return vals.some((x) => (op === 'in' ? low.includes(x.toLowerCase()) : op === 'starts' ? low.startsWith(x.toLowerCase()) : low.endsWith(x.toLowerCase())))
+  }
   if (c.field === 'landing_page' && op === 'eq') return lead.webhook_id === want || lead.landing_page_id === want
   if (c.field === 'landing_page' && op === 'neq') return lead.webhook_id !== want && lead.landing_page_id !== want
 
