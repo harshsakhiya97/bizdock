@@ -13,6 +13,23 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.8',
+    date: '2026-10-30',
+    title: 'Zoom, webhook workflows and an easier builder',
+    summary: 'Database and function changes for Zoom, workflow webhooks, Go to workflow, Bulk WhatsApp timing and lead purpose / source.',
+    new: [
+      'Zoom accounts as integrations (provider zoom, several per workspace) and zoom_account_options(); Zoom columns on meetings and events; zoom_attendance and zoom_comments; private.kick_zoom triggers; zoom edge function (sync, delete, pull, test, book_meeting, create_adhoc); zoom-pull cron every 5 minutes with retries.',
+      'workflow_hooks (own webhook per workflow: key, field_map, test mode, sample), workflow_hook_ensure / workflow_hook_regenerate, private.workflow_hook_submit from webhook_submit; workflow_runs.payload; trigger webhook_call.',
+      'workflow_turns and workflow_next_turn() for round robin in the Create Zoom meeting step.',
+      'Workflow runner: Create Zoom meeting step, Go to workflow (passes only its fields; fills the next workflow’s hook test / sample), Bulk WhatsApp anchor (start or a field) with before / after per message.',
+      'ingest_lead: purpose saved on the lead; a field mapped to lead_source sets source_id by name (added to lead_sources when new).',
+    ],
+    improved: [
+      'Meeting webhook (create_meeting) only logs the submission and a note.',
+      'workflow_rerun() keeps the post’s fields (payload / submission data).',
+    ],
+  },
+  {
     version: '0.7',
     date: '2026-10-28',
     title: 'Smarter webhooks and workflows',
