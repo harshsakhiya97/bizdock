@@ -491,7 +491,7 @@ async function makeShortLink(admin: SupabaseClient, run: Run, d: Record<string, 
   // a field at the very start is a whole URL (kept as it is); fields inside are URL-encoded
   const url = raw.replace(/\{\{?\s*([a-zA-Z0-9_]+)\s*\}\}?/g, (_m, k, at: number) => {
     const vars: Record<string, string> = { full_name: ctx.vars.name ?? '', fname: ctx.vars.first_name ?? '', ...ctx.vars }
-    const v = vars[varKey(k)] ?? vars[k] ?? ''
+    const v = vars[varKey(k)] ?? (varValue(vars, k) || varValue(vars, varKey(k)))
     return at === 0 ? v.trim() : encodeURIComponent(v)
   })
   if (!/^https?:\/\/[^\s]+$/i.test(url)) throw new Error(`Not a valid URL after filling in the lead's fields: "${url.slice(0, 120)}"`)
@@ -698,7 +698,62 @@ async function bulkBase(admin: SupabaseClient, run: Run, wf: Record<string, unkn
   return new Date(run.created_at).getTime()
 }
 
-const fill = (s: string, vars: Record<string, string>) => s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => vars[k] ?? '')
+const fill = (s: string, vars: Record<string, string>) => s.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => varValue(vars, k))
+
+/**
+ * {{x}} as is; {{x_date}} / {{x_time}} / {{x_datetime}} of a field x holding a date / date-time / time, in India time:
+ * "29 Oct 2026" / "4:00 pm" / "29 Oct 2026, 4:00 pm" (a date only: no time; a time only: no date)
+ */
+function varValue(vars: Record<string, string>, k: string): string {
+  if (vars[k] != null) return String(vars[k])
+  const m = k.match(/^(.+)_(date|time|datetime)$/)
+  if (!m || vars[m[1]] == null) return ''
+  const w = readWhen(vars[m[1]])
+  if (!w) return ''
+  const date = w.date ? niceDate(w.date) : ''
+  const time = w.time ? niceTime(w.time) : ''
+  if (m[2] === 'date') return date
+  if (m[2] === 'time') return time
+  return [date, time].filter(Boolean).join(', ')
+}
+
+/** a date (YYYY-MM-DD) and / or a time (HH:MM), India time, from what a form / webhook / step sent */
+function readWhen(raw: unknown): { date: string | null; time: string | null } | null {
+  const v = String(raw ?? '').trim()
+  if (!v) return null
+  // a time alone: 16:00 / 4:00 pm / 4 pm
+  let m = v.match(/^(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*([ap])?\.?\s*m?\.?$/i)
+  if (m && (m[2] != null || m[3])) {
+    let h = Number(m[1])
+    if (m[3]) h = (h % 12) + (m[3].toLowerCase() === 'p' ? 12 : 0)
+    return h < 24 ? { date: null, time: `${String(h).padStart(2, '0')}:${m[2] ?? '00'}` } : null
+  }
+  // 29/10/2026 or 29-10-2026 (day first), with an optional time
+  m = v.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})(?:[ ,T]+(.+))?$/)
+  if (m) {
+    const date = `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
+    const t = m[4] ? readWhen(m[4])?.time ?? null : null
+    return { date, time: t }
+  }
+  // a date alone
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return { date: v, time: null }
+  // a date with a time, with or without a zone (no zone: India time)
+  m = v.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2}(?::\d{2})?\s*[ap]\.?m\.?)$/i)
+  if (m) return { date: m[1], time: readWhen(m[2])?.time ?? null }
+  const t = parseWhen(v)
+  return t == null ? null : istParts(t)
+}
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** 2026-10-29 → 29 Oct 2026 */
+const niceDate = (d: string) => {
+  const [y, mo, dd] = d.split('-').map(Number)
+  return `${dd} ${MONTHS[mo - 1]} ${y}`
+}
+/** 16:00 → 4:00 pm */
+const niceTime = (hm: string) => {
+  const [h, mi] = hm.split(':').map(Number)
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(mi).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}`
+}
 
 /** 98XXXXXXXX / +91 98XXX XXXXX / 091... → 9198XXXXXXXX (WATI wants the country code, no +) */
 function waNumber(raw: string | null | undefined) {
