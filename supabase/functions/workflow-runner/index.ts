@@ -131,7 +131,9 @@ async function advance(admin: SupabaseClient, run: Run) {
         .sort((a, b) => a.min - b.min || a.idx - b.idx)
       let k = state.bulk && state.bulk.node === n.id ? state.bulk.i : 0
       while (k < rows.length) {
-        if (d.stop_on && run.lead_id && !run.is_test && (await matches(admin, run.lead_id, d.stop as Cond))) {
+        const stop = d.stop as Cond | undefined
+        const stopNow = d.stop_on && !run.is_test && (stop?.field?.startsWith('v:') ? matchVar(stop, ctx.vars) : !!run.lead_id && (await matches(admin, run.lead_id, stop)))
+        if (stopNow) {
           note(n, 'stopped', `Stop condition met before message ${k + 1} of ${rows.length}; the rest aren't sent.`)
           state.bulk = null
           return save({ status: 'stopped', node_id: n.id, error: null })
@@ -235,7 +237,9 @@ async function advance(admin: SupabaseClient, run: Run) {
       const cases = n.type === 'switch' ? ((d.cases ?? []) as (Cond & { id: string; label?: string })[]) : [{ ...(d as unknown as Cond), id: 'yes', label: 'Yes' }]
       let hit: { id: string; label: string } | null = null
       for (const [ci, c] of cases.entries()) {
-        if (run.lead_id && (await matches(admin, run.lead_id, c))) {
+        // a run value (webhook field / earlier step) is checked as it is; anything else on the lead
+        const ok = c.field?.startsWith('v:') ? matchVar(c, ctx.vars) : !!run.lead_id && (await matches(admin, run.lead_id, c))
+        if (ok) {
           hit = { id: c.id, label: String(c.label ?? '').trim() || `Path ${ci + 1}` }
           break
         }
@@ -243,7 +247,7 @@ async function advance(admin: SupabaseClient, run: Run) {
       if (!hit && n.type === 'condition') hit = { id: 'no', label: 'No' }
       const edge = hit ? edges.find((e) => e.source === n.id && e.sourceHandle === hit!.id) : null
       if (!hit || !edge) {
-        note(n, 'ok', !run.lead_id ? 'No lead to check: the workflow ends here.' : hit ? `Went down “${hit.label}”; it has no next step, so the workflow ends here.` : 'The lead matched no path: the workflow ends here.')
+        note(n, 'ok', !run.lead_id && !cases.some((c) => c.field?.startsWith('v:')) ? 'No lead to check: the workflow ends here.' : hit ? `Went down “${hit.label}”; it has no next step, so the workflow ends here.` : 'The lead matched no path: the workflow ends here.')
         return save({ status: 'done', node_id: n.id, error: null })
       }
       note(n, 'ok', `Went down “${hit.label}”`)
@@ -257,6 +261,39 @@ async function advance(admin: SupabaseClient, run: Run) {
 }
 
 type Cond = { field: string; op: string; value: string }
+
+/**
+ * A condition on a value of the run ("v:<key>": a webhook field or an earlier step's, e.g. submitted_at): text without
+ * case, includes any of / starts / ends, and > >= < <= as numbers or date-times.
+ */
+function matchVar(c: Cond, vars: Record<string, string>) {
+  const key = c.field.slice(2)
+  const v = String(vars[key] ?? vars[varKey(key)] ?? '').trim()
+  const op = c.op === 'is' ? 'eq' : c.op === 'is_not' ? 'neq' : c.op
+  const want = String(c.value ?? '').trim()
+  if (op === 'empty') return v === ''
+  if (op === 'not_empty') return v !== ''
+  const low = v.toLowerCase()
+  if (op === 'in' || op === 'starts' || op === 'ends') {
+    const vals = (op === 'in' ? want.split('\n') : [want]).map((x) => x.trim().toLowerCase()).filter(Boolean)
+    return vals.some((x) => (op === 'in' ? low.includes(x) : op === 'starts' ? low.startsWith(x) : low.endsWith(x)))
+  }
+  // numbers, else date-times ("2026-10-30 10:59", ISO, a date)
+  const num = (x: string) => (x !== '' && !Number.isNaN(Number(x.replace(/[,\s₹]/g, ''))) ? Number(x.replace(/[,\s₹]/g, '')) : null)
+  const when = (x: string) => parseWhen(x) ?? (/^\d{4}-\d{2}-\d{2}$/.test(x) ? Date.parse(`${x}T00:00:00+05:30`) : null)
+  let a = num(v)
+  let b = num(want)
+  if (a == null || b == null) {
+    a = when(v)
+    b = when(want)
+  }
+  if (['gt', 'gte', 'lt', 'lte'].includes(op)) {
+    if (a == null || b == null) return false
+    return op === 'gt' ? a > b : op === 'gte' ? a >= b : op === 'lt' ? a < b : a <= b
+  }
+  const same = a != null && b != null ? a === b : low === want.toLowerCase()
+  return op === 'neq' ? !same : same
+}
 
 /** older saved conditions ("is" / "is not", "Form field is filled") in today's terms */
 function normalizeCond(c: Cond): Cond {
