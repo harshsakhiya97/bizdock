@@ -53,6 +53,25 @@ Deno.serve(async (req) => {
   const token = (cfg.access_token ?? '').trim().replace(/^Bearer\s+/i, '')
   if (!/^https:\/\/[^/]+\/\w+/.test(base) || !token) return fail('The WATI API endpoint or access token is missing. Check System Connections.')
 
+  /** WATI's own words for a refusal: its message / result / errors, else its whole reply (shortened) */
+  const reason = (data: unknown): string | null => {
+    if (data == null) return null
+    if (typeof data === 'string') return data.slice(0, 500) || null
+    const d = data as Record<string, unknown>
+    const pick = (v: unknown): string | null =>
+      typeof v === 'string' && v.trim()
+        ? v.trim()
+        : Array.isArray(v) && v.length
+          ? v.map((x) => (typeof x === 'string' ? x : (x as Record<string, unknown>)?.message ?? (x as Record<string, unknown>)?.description ?? JSON.stringify(x))).join('; ')
+          : v && typeof v === 'object' && !Array.isArray(v)
+            ? pick((v as Record<string, unknown>).message) ?? pick((v as Record<string, unknown>).feedback) ?? pick((v as Record<string, unknown>).error)
+            : null
+    const found = pick(d.message) ?? pick(d.result) ?? pick(d.info) ?? pick(d.error) ?? pick(d.errors) ?? pick(d.title) ?? pick(d.raw)
+    if (found && !/^(false|true)$/i.test(found)) return found.slice(0, 500)
+    const all = JSON.stringify(d)
+    return all && all !== '{}' ? `WATI replied: ${all.slice(0, 400)}` : null
+  }
+
   const wati = async (method: string, path: string, payload?: unknown) => {
     const res = await fetch(`${base}${path}`, {
       method,
@@ -68,10 +87,7 @@ Deno.serve(async (req) => {
     }
     if (res.status === 401 || res.status === 403)
       throw new Error('WATI refused the access token (check the token and that it has template permissions).')
-    if (!res.ok) {
-      const d = data as Record<string, unknown> | null
-      throw new Error(String(d?.result ?? d?.message ?? d?.error ?? `WATI error ${res.status}`))
-    }
+    if (!res.ok) throw new Error(reason(data) ?? `WATI error ${res.status}`)
     return data as Record<string, unknown>
   }
 
@@ -93,14 +109,16 @@ Deno.serve(async (req) => {
         const t = body.template as Record<string, unknown> | undefined
         if (!t?.elementName || !t.body) return fail('Template name and body are required.')
         const d = await wati('POST', '/api/v1/whatsApp/templates', t)
-        if (d.ok === false) return fail(String(d.result ?? 'WATI did not accept the template.'))
+        // kept in the function logs, to see what WATI said
+        console.log('wati create', t.elementName, JSON.stringify(d).slice(0, 2000))
+        if (d.ok === false) return fail(`WATI did not accept the template: ${reason(d) ?? 'no reason given'}`)
         return json({ ok: true, result: d.result ?? null })
       }
       case 'delete': {
         const waba = String(body.waba_id ?? ''), name = String(body.name ?? ''), lang = String(body.language ?? '')
         if (!waba || !name || !lang) return fail('This template can’t be deleted from here (no WhatsApp account ID). Delete it in WATI.')
         const d = await wati('DELETE', `/api/v1/whatsApp/templates/${encodeURIComponent(waba)}/${encodeURIComponent(name)}/${encodeURIComponent(lang)}`)
-        if (d?.ok === false) return fail(String(d.result ?? 'Delete failed.'))
+        if (d?.ok === false) return fail(`Delete failed: ${reason(d) ?? 'no reason given'}`)
         return json({ ok: true })
       }
       default:
