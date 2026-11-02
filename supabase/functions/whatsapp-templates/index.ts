@@ -58,6 +58,10 @@ Deno.serve(async (req) => {
     if (data == null) return null
     if (typeof data === 'string') return data.slice(0, 500) || null
     const d = data as Record<string, unknown>
+    // Meta's own explanation, passed on by WATI: { error: { error_user_title, error_user_msg } }
+    const meta = (d.error ?? {}) as Record<string, unknown>
+    if (typeof meta === 'object' && (meta.error_user_title || meta.error_user_msg))
+      return [meta.error_user_title, meta.error_user_msg].filter(Boolean).join(': ').slice(0, 500)
     const pick = (v: unknown): string | null =>
       typeof v === 'string' && v.trim()
         ? v.trim()
