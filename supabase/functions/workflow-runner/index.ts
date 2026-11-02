@@ -30,7 +30,7 @@ type Run = {
   payload: Record<string, unknown> | null
   created_at: string
   /** progress inside a step that runs over time */
-  state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string>; hops?: number } | null
+  state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string>; hops?: number; lead_found?: boolean } | null
 }
 type LogLine = { at: string; node_id: string; kind: string; status: 'ok' | 'skipped' | 'failed' | 'waiting' | 'stopped'; detail: string }
 
@@ -87,6 +87,12 @@ async function advance(admin: SupabaseClient, run: Run) {
   }
 
   const ctx = await context(admin, run, (wf.funnel_id as string | null) ?? null)
+  // a Get lead details step found the lead earlier in this run: its fields (they win over same-named webhook fields)
+  if (state.lead_found && run.lead_id) {
+    const info = await leadInfo(admin, run.lead_id)
+    Object.assign(ctx.vars, info.vars)
+    ctx.leadPhone = info.leadPhone
+  }
   // values made by earlier steps of this run (generated links)
   Object.assign(ctx.vars, state.vars ?? {})
   // when this workflow started (the form post / trigger), India time: "2026-10-30 10:59"
@@ -173,6 +179,21 @@ async function advance(admin: SupabaseClient, run: Run) {
         state.vars = { ...(state.vars ?? {}), ...vars }
         Object.assign(ctx.vars, vars)
         note(n, 'ok', `Meeting on ${made.when}${made.host ? ` with ${made.host}` : ''} · Zoom ${made.id}: ${made.vars.zoom_link}${short ? ` · short link ${short.short}` : ''}`)
+      } catch (e) {
+        note(n, 'failed', (e as Error).message)
+        return save({ status: 'failed', node_id: at, error: (e as Error).message })
+      }
+    } else if (n.type === 'lead_lookup') {
+      // Get lead details: the newest lead of this workflow's sub-business with that phone / email; from here on the run is that lead's
+      try {
+        const found = await findLead(admin, run, (wf.funnel_id as string | null) ?? null, d, ctx)
+        run.lead_id = found.id
+        state.lead_found = true
+        await admin.from('workflow_runs').update({ lead_id: found.id }).eq('id', run.id)
+        const info = await leadInfo(admin, found.id)
+        Object.assign(ctx.vars, info.vars)
+        ctx.leadPhone = info.leadPhone
+        note(n, 'ok', `Found ${info.vars.name || 'the lead'}${info.vars.phone ? ` (${info.vars.phone})` : ''} by ${found.by} ${found.value}`)
       } catch (e) {
         note(n, 'failed', (e as Error).message)
         return save({ status: 'failed', node_id: at, error: (e as Error).message })
@@ -451,22 +472,24 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
       },
     }
   }
-  const { data: lead } = run.lead_id
-    ? await admin.from('leads').select('first_name, last_name, phone, whatsapp, email, city, business_id, funnel_id, landing_page_id, purpose, extra, created_at').eq('id', run.lead_id).maybeSingle()
-    : { data: null }
+  const info = run.lead_id ? await leadInfo(admin, run.lead_id) : { vars: {} as Record<string, string>, leadPhone: null }
+  // fields passed by a "Go to workflow" step / the webhook's post (on top of the lead's own)
+  const passed = extraVars(run.payload)
+  return { tenantId: run.tenant_id, leadPhone: info.leadPhone, vars: { ...info.vars, ...passed } }
+}
+
+/** a lead's fields as message variables: its extra fields (form / sheet columns), then the standard ones */
+async function leadInfo(admin: SupabaseClient, leadId: string): Promise<{ vars: Record<string, string>; leadPhone: string | null }> {
+  const { data: lead } = await admin.from('leads').select('first_name, last_name, phone, whatsapp, email, city, business_id, funnel_id, landing_page_id, purpose, extra, created_at').eq('id', leadId).maybeSingle()
   const [{ data: biz }, { data: funnel }, { data: page }] = await Promise.all([
     lead?.business_id ? admin.from('businesses').select('name').eq('id', lead.business_id).maybeSingle() : Promise.resolve({ data: null }),
     lead?.funnel_id ? admin.from('funnels').select('name').eq('id', lead.funnel_id).maybeSingle() : Promise.resolve({ data: null }),
     lead?.landing_page_id ? admin.from('landing_pages').select('name').eq('id', lead.landing_page_id).maybeSingle() : Promise.resolve({ data: null }),
   ])
   const first = (lead?.first_name ?? '').trim()
-  // fields passed by a "Go to workflow" step (on top of the lead's own)
-  const passed = extraVars(run.payload)
   return {
-    tenantId: run.tenant_id,
     leadPhone: lead ? lead.whatsapp || lead.phone : null,
     vars: {
-      // extra fields saved on the lead (form / sheet columns), then the standard ones
       ...extraVars(lead?.extra as Record<string, unknown> | null),
       purpose: lead?.purpose ?? String((lead?.extra as Record<string, unknown> | null)?.purpose ?? ''),
       first_name: first,
@@ -474,7 +497,7 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
       phone: lead?.phone ?? '',
       email: lead?.email ?? '',
       city: lead?.city ?? '',
-      ...leadDates(lead?.created_at ?? run.created_at),
+      ...leadDates(lead?.created_at),
       funnel: (funnel as { name?: string } | null)?.name ?? '',
       landing_page: (page as { name?: string } | null)?.name ?? '',
       business: (biz as { name?: string } | null)?.name ?? '',
@@ -482,9 +505,47 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
       event_date: '',
       event_time: '',
       event_link: '',
-      ...passed,
     },
   }
+}
+
+/** Get lead details: the newest lead of the workflow's sub-business whose phone (last 10 digits) / email matches the picked field */
+async function findLead(admin: SupabaseClient, run: Run, funnelId: string | null, d: Record<string, unknown>, ctx: Ctx) {
+  const by = d.match === 'email' ? 'email' : 'phone'
+  const key = String(d.value_var ?? '').trim()
+  if (!key) throw new Error('Pick the field to match the lead with.')
+  const raw = varValue(ctx.vars, key).trim()
+  if (!raw) throw new Error(`Lead not found: {{${key}}} is empty.`)
+  const { data: f } = funnelId ? await admin.from('funnels').select('sub_business_id, business_id').eq('id', funnelId).maybeSingle() : { data: null }
+  if (!f) throw new Error('Link this workflow to a funnel (Used in funnel) to find its leads.')
+  const { data: fs } = f.sub_business_id
+    ? await admin.from('funnels').select('id').eq('tenant_id', run.tenant_id).eq('sub_business_id', f.sub_business_id)
+    : await admin.from('funnels').select('id').eq('tenant_id', run.tenant_id).eq('business_id', f.business_id)
+  const ids = (fs ?? []).map((x) => x.id as string)
+  // in the sub-business: the lead's own sub-business, or one of its funnels
+  const scopes = [...(f.sub_business_id ? [`sub_business_id.eq.${f.sub_business_id}`] : []), ...(ids.length ? [`funnel_id.in.(${ids.join(',')})`] : [])]
+  if (!scopes.length) throw new Error('Lead not found: this sub-business has no funnels.')
+  let value = raw
+  let match: string[]
+  if (by === 'phone') {
+    const digits = raw.replace(/\D/g, '').slice(-10)
+    if (digits.length < 10) throw new Error(`Lead not found: "${raw}" is not a 10-digit phone number.`)
+    value = digits
+    match = [`phone.ilike.%${digits}`, `whatsapp.ilike.%${digits}`]
+  } else {
+    value = raw.toLowerCase()
+    if (!/^[^\s@,()"]+@[^\s@,()"]+$/.test(value)) throw new Error(`Lead not found: "${raw}" is not an email.`)
+    match = [`email.ilike.${value}`]
+  }
+  // (in the sub-business) and (matches), as one filter
+  const either = scopes.flatMap((sc) => match.map((m) => `and(${sc},${m})`)).join(',')
+  const { data: rows, error } = await admin.from('leads').select('id, phone, whatsapp, email').eq('tenant_id', run.tenant_id).or(either).order('created_at', { ascending: false }).limit(20)
+  if (error) throw new Error(error.message)
+  // exactly (ilike reads _ and % as wildcards)
+  const same = (x: unknown) => (by === 'phone' ? String(x ?? '').replace(/\D/g, '').slice(-10) === value : String(x ?? '').trim().toLowerCase() === value)
+  const hit = (rows ?? []).find((r) => (by === 'phone' ? same(r.phone) || same(r.whatsapp) : same(r.email)))
+  if (!hit) throw new Error(`Lead not found with ${by} ${value}.`)
+  return { id: hit.id as string, by, value }
 }
 
 /** {{lead_date}} "29 Oct 2026" and {{lead_datetime}} "29 Oct 2026, 4:00 pm": when the lead came in, India time */
