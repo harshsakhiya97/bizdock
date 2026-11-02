@@ -440,6 +440,7 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
         phone: String(t.phone ?? ''),
         email: String(t.email ?? ''),
         city: String(t.city ?? ''),
+        ...leadDates(run.created_at),
         funnel: f?.name ?? '',
         landing_page: '',
         business: b?.name ?? '',
@@ -451,7 +452,7 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
     }
   }
   const { data: lead } = run.lead_id
-    ? await admin.from('leads').select('first_name, last_name, phone, whatsapp, email, city, business_id, funnel_id, landing_page_id, purpose, extra').eq('id', run.lead_id).maybeSingle()
+    ? await admin.from('leads').select('first_name, last_name, phone, whatsapp, email, city, business_id, funnel_id, landing_page_id, purpose, extra, created_at').eq('id', run.lead_id).maybeSingle()
     : { data: null }
   const [{ data: biz }, { data: funnel }, { data: page }] = await Promise.all([
     lead?.business_id ? admin.from('businesses').select('name').eq('id', lead.business_id).maybeSingle() : Promise.resolve({ data: null }),
@@ -473,6 +474,7 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
       phone: lead?.phone ?? '',
       email: lead?.email ?? '',
       city: lead?.city ?? '',
+      ...leadDates(lead?.created_at ?? run.created_at),
       funnel: (funnel as { name?: string } | null)?.name ?? '',
       landing_page: (page as { name?: string } | null)?.name ?? '',
       business: (biz as { name?: string } | null)?.name ?? '',
@@ -483,6 +485,14 @@ async function context(admin: SupabaseClient, run: Run, workflowFunnel: string |
       ...passed,
     },
   }
+}
+
+/** {{lead_date}} "29 Oct 2026" and {{lead_datetime}} "29 Oct 2026, 4:00 pm": when the lead came in, India time */
+function leadDates(at: string | null | undefined) {
+  const t = at ? Date.parse(at) : NaN
+  if (Number.isNaN(t)) return { lead_date: '', lead_datetime: '' }
+  const p = istParts(t)
+  return { lead_date: niceDate(p.date), lead_datetime: `${niceDate(p.date)}, ${niceTime(p.time)}` }
 }
 
 /** a link for this lead: <app>/<code> → the step's URL with the lead's fields ({field} or {{field}}) filled in */
