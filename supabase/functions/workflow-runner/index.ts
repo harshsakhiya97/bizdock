@@ -506,7 +506,8 @@ async function makeShortLink(admin: SupabaseClient, run: Run, d: Record<string, 
   })
   if (!/^https?:\/\/[^\s]+$/i.test(url)) throw new Error(`Not a valid URL after filling in the lead's fields: "${url.slice(0, 120)}"`)
   const key = varKey(String(d.var ?? '')) || 'generated_link'
-  const base = String(d.base_url ?? '').replace(/\/+$/, '')
+  // the workspace's own address (primary domain + folder); what the builder saved only if it has none
+  const base = (await appUrl(admin, run.tenant_id)) || String(d.base_url ?? '').replace(/\/+$/, '')
   // 8 characters, no look-alikes (0/O, 1/I/L); unique across all workspaces
   const abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
   for (let tries = 0; tries < 5; tries++) {
@@ -529,6 +530,14 @@ async function makeShortLink(admin: SupabaseClient, run: Run, d: Record<string, 
     if (!String(error.message).includes('duplicate')) throw new Error(error.message)
   }
   throw new Error('Could not make a unique link; try again.')
+}
+
+/** https://<primary domain>/<folder> of the workspace (e.g. https://pride.viralsakhiya.com/pride), or '' */
+async function appUrl(admin: SupabaseClient, tenantId: string) {
+  const { data } = await admin.from('tenant_domains').select('domain, base_path').eq('tenant_id', tenantId).order('is_primary', { ascending: false }).order('created_at').limit(1).maybeSingle()
+  if (!data?.domain) return ''
+  const path = String(data.base_path ?? '').replace(/^\/+|\/+$/g, '')
+  return `https://${data.domain}${path ? `/${path}` : ''}`
 }
 
 /** a date-time a form / booking tool sent: ISO with a zone, "2026-11-02 16:00" (India time), or epoch s / ms */
