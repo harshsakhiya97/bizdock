@@ -13,6 +13,19 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.10',
+    date: '2026-11-03',
+    title: 'Widgets: Booking Calendar',
+    summary: 'Database and function changes for the Widgets module, the Booking Calendar and the workflow steps it uses.',
+    new: [
+      'Widgets as a tenant module (Pride turned on); widgets (booking_calendar: config, code, round-robin last member) and widget_bookings (held slots) with access by the widgets permission.',
+      'widget_public(code), widget_slots(code, from, to) — slots in India time with free / total team members (busy = BizDock meetings or held slots of live widgets) — and widget_book(...) for the booking (lock, still free, round robin, hold).',
+      'widget-book edge function (public): books the slot and posts the booking (visitor, slot, team member) to the widget’s own workflow hook.',
+      'workflow_create_lead(funnel, data, note): adds a lead like a form post (first stage, source, activity note).',
+      'Workflow runner: Get lead details matches phone or email and can add the lead when not found (create_missing); Create Zoom meeting can meet with the team member the webhook sent (meet_mode webhook).',
+    ],
+  },
+  {
     version: '0.9',
     date: '2026-11-03',
     title: 'Get lead details, run controls and template tools',
