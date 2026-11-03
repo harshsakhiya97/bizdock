@@ -714,6 +714,13 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
       const { data: turn } = await admin.rpc('workflow_next_turn', { p_workflow: run.workflow_id, p_node: n.id })
       host = pool[((Number(turn) || 1) - 1) % pool.length]
     }
+  } else if (d.meet_mode === 'webhook') {
+    // the team member the webhook sent (e.g. a Booking Calendar booking's member_id), if still active here
+    const mid = String(ctx.vars[String(d.meet_var || 'member_id')] ?? '').trim()
+    const { data: m } = /^[0-9a-f-]{36}$/i.test(mid)
+      ? await admin.from('tenant_members').select('id').eq('id', mid).eq('tenant_id', run.tenant_id).eq('status', 'active').maybeSingle()
+      : { data: null }
+    host = m?.id ?? lead.owner_id ?? null
   } else host = lead.owner_id ?? null
   let sub = lead.sub_business_id
   if (!sub && lead.funnel_id) {
