@@ -43,6 +43,7 @@ export const MODULES: { key: string; label: string; description: string }[] = [
   { key: 'funnels', label: 'Funnels', description: 'Webinar and VSL tracking' },
   { key: 'payments', label: 'Payments & Sales', description: 'Online and offline payments, part-payments' },
   { key: 'finance', label: 'Finance', description: 'Income, expenses and profit per business' },
+  { key: 'widgets', label: 'Widgets', description: 'Widgets (details to come)' },
   { key: 'team', label: 'Team & Salary', description: 'Employee logins, roles and salary' },
   { key: 'settings', label: 'Settings', description: 'Businesses and app settings' },
 ]
