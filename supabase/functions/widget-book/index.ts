@@ -1,6 +1,6 @@
 // widget-book: a visitor books a slot on a Booking Calendar widget (public, no login).
 //
-//   POST { code, start (ISO), name, phone, email }
+//   POST { code, start (ISO), name?, phone?, email? }
 //     → holds the slot (widget_book: still free? round robin among the free team members)
 //     → posts the booking to the widget's webhook (a BizDock workflow's own webhook, or any URL)
 //     → { ok, booking_id, thank_you, redirect_url }
@@ -98,15 +98,16 @@ Deno.serve(async (req) => {
   }
   await admin.from('widget_bookings').update({ webhook_status: status, webhook_error: failed }).eq('id', b.booking_id)
 
+  // no name given: "Thanks {{name}}!" reads "Thanks!"
   const fill = (t: string) =>
     t
-      .replace(/\{\{\s*name\s*\}\}/g, payload.name)
+      .replace(payload.name ? /\{\{\s*name\s*\}\}/g : /\s*\{\{\s*name\s*\}\}/g, payload.name)
       .replace(/\{\{\s*date\s*\}\}/g, niceDate(s.date))
       .replace(/\{\{\s*time\s*\}\}/g, niceTime(s.time))
   return json({
     ok: true,
     booking_id: b.booking_id,
-    thank_you: fill(String(b.thank_you ?? '') || 'Thanks {{name}}! Your call is booked for {{date}} at {{time}}.'),
+    thank_you: fill(String(b.thank_you ?? '') || 'Thanks! Your call is booked for {{date}} at {{time}}.'),
     redirect_url: /^https?:\/\//i.test(String(b.redirect_url ?? '')) ? String(b.redirect_url) : null,
   })
 })
