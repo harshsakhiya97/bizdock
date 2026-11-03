@@ -509,13 +509,27 @@ async function leadInfo(admin: SupabaseClient, leadId: string): Promise<{ vars: 
   }
 }
 
-/** Get lead details: the newest lead of the workflow's sub-business whose phone (last 10 digits) / email matches the picked field */
+/**
+ * Get lead details: the newest lead of the workflow's sub-business whose phone (last 10 digits) / email matches the picked
+ * field — or, "phone or email", the newest lead matching either (e.g. a Booking Calendar booking's phone and email)
+ */
 async function findLead(admin: SupabaseClient, run: Run, funnelId: string | null, d: Record<string, unknown>, ctx: Ctx) {
-  const by = d.match === 'email' ? 'email' : 'phone'
-  const key = String(d.value_var ?? '').trim()
-  if (!key) throw new Error('Pick the field to match the lead with.')
-  const raw = varValue(ctx.vars, key).trim()
-  if (!raw) throw new Error(`Lead not found: {{${key}}} is empty.`)
+  const by = d.match === 'email' ? 'email' : d.match === 'any' ? 'any' : 'phone'
+  const phoneKey = String((by === 'any' ? d.phone_var || 'phone' : by === 'phone' ? d.value_var : '') ?? '').trim()
+  const emailKey = String((by === 'any' ? d.email_var || 'email' : by === 'email' ? d.value_var : '') ?? '').trim()
+  if (by !== 'any' && !String(d.value_var ?? '').trim()) throw new Error('Pick the field to match the lead with.')
+  const rawPhone = phoneKey ? varValue(ctx.vars, phoneKey).trim() : ''
+  const rawEmail = emailKey ? varValue(ctx.vars, emailKey).trim() : ''
+  const digits = rawPhone.replace(/\D/g, '').slice(-10)
+  const email = rawEmail.toLowerCase()
+  const okPhone = digits.length === 10
+  const okEmail = /^[^\s@,()"]+@[^\s@,()"]+$/.test(email)
+  if (by === 'phone' && !rawPhone) throw new Error(`Lead not found: {{${phoneKey}}} is empty.`)
+  if (by === 'email' && !rawEmail) throw new Error(`Lead not found: {{${emailKey}}} is empty.`)
+  if (by === 'phone' && !okPhone) throw new Error(`Lead not found: "${rawPhone}" is not a 10-digit phone number.`)
+  if (by === 'email' && !okEmail) throw new Error(`Lead not found: "${rawEmail}" is not an email.`)
+  if (by === 'any' && !okPhone && !okEmail) throw new Error('Lead not found: no valid phone number or email to match.')
+
   const { data: f } = funnelId ? await admin.from('funnels').select('sub_business_id, business_id').eq('id', funnelId).maybeSingle() : { data: null }
   if (!f) throw new Error('Link this workflow to a funnel (Used in funnel) to find its leads.')
   const { data: fs } = f.sub_business_id
@@ -525,27 +539,22 @@ async function findLead(admin: SupabaseClient, run: Run, funnelId: string | null
   // in the sub-business: the lead's own sub-business, or one of its funnels
   const scopes = [...(f.sub_business_id ? [`sub_business_id.eq.${f.sub_business_id}`] : []), ...(ids.length ? [`funnel_id.in.(${ids.join(',')})`] : [])]
   if (!scopes.length) throw new Error('Lead not found: this sub-business has no funnels.')
-  let value = raw
-  let match: string[]
-  if (by === 'phone') {
-    const digits = raw.replace(/\D/g, '').slice(-10)
-    if (digits.length < 10) throw new Error(`Lead not found: "${raw}" is not a 10-digit phone number.`)
-    value = digits
-    match = [`phone.ilike.%${digits}`, `whatsapp.ilike.%${digits}`]
-  } else {
-    value = raw.toLowerCase()
-    if (!/^[^\s@,()"]+@[^\s@,()"]+$/.test(value)) throw new Error(`Lead not found: "${raw}" is not an email.`)
-    match = [`email.ilike.${value}`]
-  }
+  const match: string[] = [
+    ...(by !== 'email' && okPhone ? [`phone.ilike.%${digits}`, `whatsapp.ilike.%${digits}`] : []),
+    ...(by !== 'phone' && okEmail ? [`email.ilike.${email}`] : []),
+  ]
   // (in the sub-business) and (matches), as one filter
   const either = scopes.flatMap((sc) => match.map((m) => `and(${sc},${m})`)).join(',')
   const { data: rows, error } = await admin.from('leads').select('id, phone, whatsapp, email').eq('tenant_id', run.tenant_id).or(either).order('created_at', { ascending: false }).limit(20)
   if (error) throw new Error(error.message)
   // exactly (ilike reads _ and % as wildcards)
-  const same = (x: unknown) => (by === 'phone' ? String(x ?? '').replace(/\D/g, '').slice(-10) === value : String(x ?? '').trim().toLowerCase() === value)
-  const hit = (rows ?? []).find((r) => (by === 'phone' ? same(r.phone) || same(r.whatsapp) : same(r.email)))
-  if (!hit) throw new Error(`Lead not found with ${by} ${value}.`)
-  return { id: hit.id as string, by, value }
+  const samePhone = (x: unknown) => okPhone && String(x ?? '').replace(/\D/g, '').slice(-10) === digits
+  const sameEmail = (x: unknown) => okEmail && String(x ?? '').trim().toLowerCase() === email
+  const hit = (rows ?? []).find((r) => (by !== 'email' && (samePhone(r.phone) || samePhone(r.whatsapp))) || (by !== 'phone' && sameEmail(r.email)))
+  const tried = [by !== 'email' && okPhone ? `phone ${digits}` : '', by !== 'phone' && okEmail ? `email ${email}` : ''].filter(Boolean).join(' or ')
+  if (!hit) throw new Error(`Lead not found with ${tried}.`)
+  const viaPhone = by !== 'email' && (samePhone(hit.phone) || samePhone(hit.whatsapp))
+  return { id: hit.id as string, by: viaPhone ? 'phone' : 'email', value: viaPhone ? digits : email }
 }
 
 /** {{lead_date}} "29 Oct 2026" and {{lead_datetime}} "29 Oct 2026, 4:00 pm": when the lead came in, India time */
