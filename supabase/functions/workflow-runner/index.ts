@@ -186,14 +186,27 @@ async function advance(admin: SupabaseClient, run: Run) {
     } else if (n.type === 'lead_lookup') {
       // Get lead details: the newest lead of this workflow's sub-business with that phone / email; from here on the run is that lead's
       try {
-        const found = await findLead(admin, run, (wf.funnel_id as string | null) ?? null, d, ctx)
+        let found: { id: string; by: string; value: string; added?: boolean }
+        try {
+          found = await findLead(admin, run, (wf.funnel_id as string | null) ?? null, d, ctx)
+        } catch (e) {
+          // "If not found, add the lead": a new lead in the workflow's funnel (e.g. someone who booked without filling the form)
+          if (!d.create_missing || !/^Lead not found/.test((e as Error).message)) throw e
+          found = { ...(await addLead(admin, (wf.funnel_id as string | null) ?? null, d, ctx, wf.name as string)), added: true }
+        }
         run.lead_id = found.id
         state.lead_found = true
         await admin.from('workflow_runs').update({ lead_id: found.id }).eq('id', run.id)
         const info = await leadInfo(admin, found.id)
         Object.assign(ctx.vars, info.vars)
         ctx.leadPhone = info.leadPhone
-        note(n, 'ok', `Found ${info.vars.name || 'the lead'}${info.vars.phone ? ` (${info.vars.phone})` : ''} by ${found.by} ${found.value}`)
+        note(
+          n,
+          'ok',
+          found.added
+            ? `No lead with that phone or email: added ${info.vars.name || 'the lead'}${info.vars.phone ? ` (${info.vars.phone})` : ''} to the funnel`
+            : `Found ${info.vars.name || 'the lead'}${info.vars.phone ? ` (${info.vars.phone})` : ''} by ${found.by} ${found.value}`,
+        )
       } catch (e) {
         note(n, 'failed', (e as Error).message)
         return save({ status: 'failed', node_id: at, error: (e as Error).message })
@@ -555,6 +568,28 @@ async function findLead(admin: SupabaseClient, run: Run, funnelId: string | null
   if (!hit) throw new Error(`Lead not found with ${tried}.`)
   const viaPhone = by !== 'email' && (samePhone(hit.phone) || samePhone(hit.whatsapp))
   return { id: hit.id as string, by: viaPhone ? 'phone' : 'email', value: viaPhone ? digits : email }
+}
+
+/** Get lead details found no one: add the lead (name, phone, email from the step's fields) to the workflow's funnel */
+async function addLead(admin: SupabaseClient, funnelId: string | null, d: Record<string, unknown>, ctx: Ctx, workflowName: string) {
+  if (!funnelId) throw new Error('Lead not found, and the workflow has no funnel (Used in funnel) to add it to.')
+  const phoneKey = String((d.match === 'any' ? d.phone_var || 'phone' : d.match === 'email' ? 'phone' : d.value_var) ?? 'phone')
+  const emailKey = String((d.match === 'any' ? d.email_var || 'email' : d.match === 'email' ? d.value_var : 'email') ?? 'email')
+  const data = {
+    name: varValue(ctx.vars, 'name').trim() || [varValue(ctx.vars, 'first_name'), varValue(ctx.vars, 'last_name')].join(' ').trim(),
+    phone: varValue(ctx.vars, phoneKey).trim(),
+    email: varValue(ctx.vars, emailKey).trim(),
+  }
+  if (!data.name) throw new Error('Lead not found, and there is no name to add it with.')
+  if (data.phone.replace(/\D/g, '').length < 10) throw new Error('Lead not found, and there is no valid phone number to add it with.')
+  const widget = varValue(ctx.vars, 'widget').trim()
+  const { data: id, error } = await admin.rpc('workflow_create_lead', {
+    p_funnel: funnelId,
+    p_data: data,
+    p_note: widget ? `Booked a call on the booking calendar “${widget}”` : `Added by the workflow “${workflowName}”`,
+  })
+  if (error) throw new Error(`Could not add the lead: ${error.message}`)
+  return { id: String(id), by: 'new', value: '' }
 }
 
 /** {{lead_date}} "29 Oct 2026" and {{lead_datetime}} "29 Oct 2026, 4:00 pm": when the lead came in, India time */
