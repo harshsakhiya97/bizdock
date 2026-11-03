@@ -13,6 +13,23 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.9',
+    date: '2026-11-03',
+    title: 'Get lead details, run controls and template tools',
+    summary: 'Database and function changes for the workspace address, template media, Get lead details, Lead date fields and cancelling runs.',
+    new: [
+      'tenant_domains.base_path; resolve_tenant returns app_url (primary domain + folder); saved localhost link bases fixed.',
+      'wa-media storage bucket (public, 16 MB; jpeg, png, mp4, 3gpp, pdf) for WhatsApp template header files, written by settings editors.',
+      'Workflow runner: Get lead details step (lead_lookup) — newest lead of the workflow’s sub-business by phone (last 10 digits) or email; the run takes that lead (workflow_runs.lead_id, state.lead_found) and its fields win from then on; “Lead not found” fails the run.',
+      'Workflow runner: {{lead_date}} and {{lead_datetime}} (India time) on every run.',
+      'workflow_cancel(run): stops a queued / waiting run (needs workflows edit), with “Cancelled by <name>”.',
+    ],
+    improved: [
+      'Workflow runner: short links use the workspace’s own address from tenant_domains, not what the builder saved.',
+      'whatsapp-templates: shows WATI’s / Meta’s reason (error_user_title / error_user_msg) when a template is refused, and logs WATI’s reply.',
+    ],
+  },
+  {
     version: '0.8',
     date: '2026-10-30',
     title: 'Zoom, webhook workflows and an easier builder',
