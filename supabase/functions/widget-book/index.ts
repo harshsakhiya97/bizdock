@@ -104,6 +104,8 @@ Deno.serve(async (req) => {
       .replace(payload.name ? /\{\{\s*name\s*\}\}/g : /\s*\{\{\s*name\s*\}\}/g, payload.name)
       .replace(/\{\{\s*date\s*\}\}/g, niceDate(s.date))
       .replace(/\{\{\s*time\s*\}\}/g, niceTime(s.time))
+      .replace(/\{\{\s*end_time\s*\}\}/g, niceTime(e.time))
+      .replace(/\{\{\s*member_name\s*\}\}/g, payload.member_name)
   return json({
     ok: true,
     booking_id: b.booking_id,
