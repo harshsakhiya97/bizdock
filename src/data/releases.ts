@@ -13,6 +13,21 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.11',
+    date: '2026-11-04',
+    title: 'Booking Calendar fields, workflow runner upgrades',
+    summary: 'Database and function changes for booking calendar fields, Wait for event and faster workflow timing.',
+    new: [
+      'widget_public gives a booking calendar’s own fields; widget_bookings.answers keeps each booking’s answers; widget-book checks required fields / options and posts the answers to the workflow.',
+      'widget_member_email(member): a booking calendar team member’s email for widget editors (the workflow sample’s member_email).',
+      'Workflow runner: Wait for event (until before / after a date-time field or the webinar); the team member from the webhook found by email (member_name / member_phone for later steps).',
+    ],
+    improved: [
+      'Workflow runner cron every 10 seconds (was every minute), so timed messages go out on time.',
+      'widget-book sends name, phone, email, meeting_start / meeting_end, member_email and widget (member id / name / phone, booking id and the split date / time fields dropped).',
+    ],
+  },
+  {
     version: '0.10',
     date: '2026-11-03',
     title: 'Widgets: Booking Calendar',
