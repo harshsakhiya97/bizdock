@@ -53,6 +53,9 @@ Deno.serve(async (req) => {
     const v = String(given[f.key] ?? '').trim().slice(0, 2000)
     if (f.required && !v) return json({ error: `Please fill in ${f.label}.` }, 400)
     if (v && f.type === 'select' && Array.isArray(f.options) && f.options.length && !f.options.includes(v)) return json({ error: `Please pick ${f.label} from the list.` }, 400)
+    // several picks, as one text: "Coach, Creator"
+    if (v && f.type === 'multiselect' && Array.isArray(f.options) && f.options.length && v.split(',').some((x) => !f.options!.includes(x.trim())))
+      return json({ error: `Please pick ${f.label} from the list.` }, 400)
     answers[f.key] = v
   }
   const { data: b, error } = await admin.rpc('widget_book', {
