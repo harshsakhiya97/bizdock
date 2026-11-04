@@ -62,9 +62,6 @@ Deno.serve(async (req) => {
     email: String(body.email ?? '').trim().toLowerCase(),
     meeting_start: `${s.date} ${s.time}`,
     meeting_end: `${e.date} ${e.time}`,
-    meeting_date: s.date,
-    meeting_time: s.time,
-    meeting_end_time: e.time,
     member_email: member?.email ?? '',
     widget: String(b.widget_name ?? ''),
   }
