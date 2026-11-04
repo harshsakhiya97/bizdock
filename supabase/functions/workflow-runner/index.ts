@@ -779,12 +779,21 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
       host = pool[((Number(turn) || 1) - 1) % pool.length]
     }
   } else if (d.meet_mode === 'webhook') {
-    // the team member the webhook sent (e.g. a Booking Calendar booking's member_id), if still active here
-    const mid = String(ctx.vars[String(d.meet_var || 'member_id')] ?? '').trim()
-    const { data: m } = /^[0-9a-f-]{36}$/i.test(mid)
-      ? await admin.from('tenant_members').select('id').eq('id', mid).eq('tenant_id', run.tenant_id).eq('status', 'active').maybeSingle()
-      : { data: null }
-    host = m?.id ?? lead.owner_id ?? null
+    // the team member the webhook sent (a Booking Calendar booking sends their email; older ones their id), if still active here
+    const who = String(varValue(ctx.vars, String(d.meet_var || 'member_email')) ?? '').trim()
+    let mid: string | null = null
+    if (/^[0-9a-f-]{36}$/i.test(who)) {
+      const { data: m } = await admin.from('tenant_members').select('id').eq('id', who).eq('tenant_id', run.tenant_id).eq('status', 'active').maybeSingle()
+      mid = m?.id ?? null
+    } else if (who.includes('@')) {
+      const { data: ps } = await admin.from('profiles').select('id').ilike('email', who.replace(/[%_]/g, '\\$&'))
+      const ids = (ps ?? []).map((p) => p.id as string)
+      const { data: m } = ids.length
+        ? await admin.from('tenant_members').select('id').in('user_id', ids).eq('tenant_id', run.tenant_id).eq('status', 'active').limit(1).maybeSingle()
+        : { data: null }
+      mid = m?.id ?? null
+    }
+    host = mid ?? lead.owner_id ?? null
   } else host = lead.owner_id ?? null
   let sub = lead.sub_business_id
   if (!sub && lead.funnel_id) {
@@ -799,15 +808,18 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
     .single()
   if (error) throw new Error(`Could not add the meeting: ${error.message}`)
   const z = await callZoom({ action: 'book_meeting', meeting_id: m.id, account: d.account || null, topic })
-  const { data: who } = host ? await admin.from('tenant_members').select('profiles(full_name)').eq('id', host).maybeSingle() : { data: null }
-  const hostName = ((who as { profiles?: { full_name?: string } } | null)?.profiles?.full_name ?? null) as string | null
+  const { data: who } = host ? await admin.from('tenant_members').select('profiles(full_name, email, phone)').eq('id', host).maybeSingle() : { data: null }
+  const hostProfile = (who as { profiles?: { full_name?: string; email?: string; phone?: string } } | null)?.profiles ?? null
+  const hostName = (hostProfile?.full_name ?? null) as string | null
   await admin.from('lead_activities').insert({
     tenant_id: run.tenant_id,
     lead_id: lead.id,
     kind: 'note',
     note: `Meeting booked by workflow for ${date} ${time}${hostName ? ` · with ${hostName}` : ''} · Zoom ${z.join_url}`,
   })
-  return { id: String(z.id), when: `${date} ${time}`, host: hostName, vars: vars(z) }
+  // the team member it went to, for later messages ({{member_name}}, {{member_email}}, {{member_phone}})
+  const member = d.meet_mode === 'webhook' ? { member_name: hostName ?? '', member_email: hostProfile?.email ?? '', member_phone: hostProfile?.phone ?? '' } : {}
+  return { id: String(z.id), when: `${date} ${time}`, host: hostName, vars: { ...vars(z), ...member } }
 }
 
 /** Bulk WhatsApp: the moment its times count from */

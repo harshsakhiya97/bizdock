@@ -54,7 +54,8 @@ Deno.serve(async (req) => {
   const s = ist(b.starts_at)
   const e = ist(b.ends_at)
   const member = (b.member ?? null) as { id: string; name: string; email: string; phone: string } | null
-  // what the webhook gets: the visitor, the slot (India time) and the team member it went to
+  // what the webhook gets: the visitor, the slot (India time) and the team member it went to (by email: the
+  // workflow's Create Zoom meeting finds them by it)
   const payload: Record<string, string> = {
     name: String(body.name ?? '').trim(),
     phone: String(body.phone ?? '').trim(),
@@ -64,12 +65,8 @@ Deno.serve(async (req) => {
     meeting_date: s.date,
     meeting_time: s.time,
     meeting_end_time: e.time,
-    member_id: member?.id ?? '',
-    member_name: member?.name ?? '',
     member_email: member?.email ?? '',
-    member_phone: member?.phone ?? '',
     widget: String(b.widget_name ?? ''),
-    booking_id: String(b.booking_id),
   }
 
   // where it goes: a BizDock workflow's own webhook (straight to the lead-webhook function) or the pasted URL
@@ -105,7 +102,7 @@ Deno.serve(async (req) => {
       .replace(/\{\{\s*date\s*\}\}/g, niceDate(s.date))
       .replace(/\{\{\s*time\s*\}\}/g, niceTime(s.time))
       .replace(/\{\{\s*end_time\s*\}\}/g, niceTime(e.time))
-      .replace(/\{\{\s*member_name\s*\}\}/g, payload.member_name)
+      .replace(/\{\{\s*member_name\s*\}\}/g, member?.name ?? '')
   return json({
     ok: true,
     booking_id: b.booking_id,
