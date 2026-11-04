@@ -1,6 +1,6 @@
 // widget-book: a visitor books a slot on a Booking Calendar widget (public, no login).
 //
-//   POST { code, start (ISO), name?, phone?, email? }
+//   POST { code, start (ISO), name, phone, email, answers? }  (answers: the widget's own fields, by key)
 //     → holds the slot (widget_book: still free? round robin among the free team members)
 //     → posts the booking to the widget's webhook (a BizDock workflow's own webhook, or any URL)
 //     → { ok, booking_id, thank_you, redirect_url }
@@ -42,6 +42,19 @@ Deno.serve(async (req) => {
   if (!/^[a-z0-9]{6,20}$/i.test(code) || Number.isNaN(Date.parse(start))) return json({ error: 'Pick a time first.' }, 400)
 
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
+  // the widget's own fields (Your Details, after name / phone / email): checked before the slot is taken
+  const { data: wd } = await admin.from('widgets').select('config').eq('code', code).eq('is_active', true).is('archived_at', null).maybeSingle()
+  const fields = ((wd?.config as { fields?: unknown } | null)?.fields ?? []) as { key: string; label: string; type: string; required?: boolean; options?: string[] }[]
+  const given = (body.answers && typeof body.answers === 'object' ? body.answers : {}) as Record<string, unknown>
+  const answers: Record<string, string> = {}
+  for (const f of Array.isArray(fields) ? fields : []) {
+    // never over a field the booking sends itself
+    if (!f?.key || ['name', 'phone', 'email', 'meeting_start', 'meeting_end', 'member_email', 'widget'].includes(f.key)) continue
+    const v = String(given[f.key] ?? '').trim().slice(0, 2000)
+    if (f.required && !v) return json({ error: `Please fill in ${f.label}.` }, 400)
+    if (v && f.type === 'select' && Array.isArray(f.options) && f.options.length && !f.options.includes(v)) return json({ error: `Please pick ${f.label} from the list.` }, 400)
+    answers[f.key] = v
+  }
   const { data: b, error } = await admin.rpc('widget_book', {
     p_code: code,
     p_start: new Date(start).toISOString(),
@@ -64,7 +77,10 @@ Deno.serve(async (req) => {
     meeting_end: `${e.date} ${e.time}`,
     member_email: member?.email ?? '',
     widget: String(b.widget_name ?? ''),
+    // the widget's own fields, under their names
+    ...answers,
   }
+  if (Object.keys(answers).length) await admin.from('widget_bookings').update({ answers }).eq('id', b.booking_id)
 
   // where it goes: a BizDock workflow's own webhook (straight to the lead-webhook function) or the pasted URL
   const hook = (b.webhook ?? {}) as { type?: string; workflow_id?: string; url?: string }
