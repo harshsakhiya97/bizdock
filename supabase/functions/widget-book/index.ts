@@ -50,12 +50,19 @@ Deno.serve(async (req) => {
   for (const f of Array.isArray(fields) ? fields : []) {
     // never over a field the booking sends itself
     if (!f?.key || ['name', 'phone', 'email', 'meeting_start', 'meeting_end', 'member_email', 'widget'].includes(f.key)) continue
+    const opts = Array.isArray(f.options) ? f.options : []
+    if (f.type === 'multiselect') {
+      // several picks, sent as a list (an option may have commas); the workflow gets them as one text: "Coach, Creator"
+      const raw = given[f.key]
+      const picks = (Array.isArray(raw) ? raw : raw == null || raw === '' ? [] : [raw]).map((x) => String(x).trim()).filter(Boolean)
+      if (f.required && !picks.length) return json({ error: `Please pick ${f.label}.` }, 400)
+      if (opts.length && picks.some((x) => !opts.includes(x))) return json({ error: `Please pick ${f.label} from the list.` }, 400)
+      answers[f.key] = opts.filter((o) => picks.includes(o)).join(', ')
+      continue
+    }
     const v = String(given[f.key] ?? '').trim().slice(0, 2000)
     if (f.required && !v) return json({ error: `Please fill in ${f.label}.` }, 400)
-    if (v && f.type === 'select' && Array.isArray(f.options) && f.options.length && !f.options.includes(v)) return json({ error: `Please pick ${f.label} from the list.` }, 400)
-    // several picks, as one text: "Coach, Creator"
-    if (v && f.type === 'multiselect' && Array.isArray(f.options) && f.options.length && v.split(',').some((x) => !f.options!.includes(x.trim())))
-      return json({ error: `Please pick ${f.label} from the list.` }, 400)
+    if (v && f.type === 'select' && opts.length && !opts.includes(v)) return json({ error: `Please pick ${f.label} from the list.` }, 400)
     answers[f.key] = v
   }
   const { data: b, error } = await admin.rpc('widget_book', {
