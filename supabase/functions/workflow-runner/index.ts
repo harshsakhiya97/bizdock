@@ -6,9 +6,10 @@
 //
 // Steps done now: WhatsApp (approved template through WATI), Bulk WhatsApp (several templates, each a set
 // time after the run started, with an optional stop condition), Generate link (<app>/<code> for the lead,
-// kept for later steps as {{generated_link}}), Create Zoom meeting ({{zoom_link}}, optionally as a short link), Wait,
-// Switch / Yes-No and Go to workflow (with fields passed as the next workflow's variables). Email, Call and Wait for
-// event are skipped (logged) — they come later.
+// kept for later steps as {{generated_link}}), Create Zoom meeting ({{zoom_link}}, optionally as a short link), Get lead
+// details, Wait, Wait for event (until some time before / after a date-time field such as the Zoom meeting's start),
+// Switch / Yes-No and Go to workflow (with fields passed as the next workflow's variables). Email and Call are skipped
+// (logged) — they come later.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -265,6 +266,25 @@ async function advance(admin: SupabaseClient, run: Run) {
       const until = new Date(Date.now() + ms)
       note(n, 'waiting', `Waiting until ${until.toISOString()}`)
       return save({ status: 'waiting', node_id: n.id, next_at: until.toISOString() })
+    } else if (n.type === 'wait_event') {
+      // Wait for event: until some time before (or after) a date-time — a field such as the Zoom meeting's start,
+      // or (older steps) the workflow's webinar / event; a moment already passed carries straight on
+      let base: number
+      try {
+        base = await bulkBase(admin, run, wf as Record<string, unknown>, { anchor: d.anchor === 'var' ? 'var' : 'event', anchor_var: d.anchor_var }, ctx)
+      } catch (e) {
+        const msg = (e as Error).message.replace('to count the times from', 'to wait for')
+        note(n, 'failed', msg)
+        return save({ status: 'failed', node_id: at, error: msg })
+      }
+      const ms = Math.max(0, Number(d.amount) || 0) * (UNIT_MS[String(d.unit)] ?? UNIT_MS.hours)
+      const until = base + (d.when === 'after' ? ms : -ms)
+      const what = `${Number(d.amount) || 0} ${String(d.unit ?? 'hours')} ${d.when === 'after' ? 'after' : 'before'} ${new Date(base).toISOString()}`
+      if (until > Date.now() + 5_000) {
+        note(n, 'waiting', `Waiting until ${new Date(until).toISOString()} (${what})`)
+        return save({ status: 'waiting', node_id: n.id, next_at: new Date(until).toISOString() })
+      }
+      note(n, 'ok', `${what} has already passed: carried on`)
     } else if (n.type === 'condition' || n.type === 'switch') {
       // Switch: the first path whose condition the lead matches (checked top to bottom); Yes / No: yes or no.
       // A path with no line, or no path matching, ends the workflow here.
