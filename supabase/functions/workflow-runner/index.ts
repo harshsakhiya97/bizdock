@@ -8,8 +8,10 @@
 // time after the run started, with an optional stop condition), Generate link (<app>/<code> for the lead,
 // kept for later steps as {{generated_link}}), Create Zoom meeting ({{zoom_link}}, optionally as a short link), Get lead
 // details, Wait, Wait for event (until some time before / after a date-time field such as the Zoom meeting's start),
-// Switch / Yes-No and Go to workflow (with fields passed as the next workflow's variables). Email and Call are skipped
-// (logged) — they come later.
+// Switch / Yes-No and Go to workflow (with fields passed as the next workflow's variables); for Webinar businesses Register
+// for webinar (the lead on the coming date, with their own Zoom join link), Wait until Zoom data is in and Get webinar
+// analytics (attendance, Q&A, chat, polls → Super Hot / Hot / Warm / Cold). Before / After webinar runs carry their date
+// (event_id). Email and Call are skipped (logged) — they come later.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -29,9 +31,11 @@ type Run = {
   test_data: Record<string, string> | null
   /** started by a post to the workflow's own webhook: the post's fields (no lead) */
   payload: Record<string, unknown> | null
+  /** Before / After webinar: the date (calendar event) this run is for */
+  event_id: string | null
   created_at: string
   /** progress inside a step that runs over time */
-  state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string>; hops?: number; lead_found?: boolean } | null
+  state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string>; hops?: number; lead_found?: boolean; event_id?: string; tries?: number } | null
 }
 type LogLine = { at: string; node_id: string; kind: string; status: 'ok' | 'skipped' | 'failed' | 'waiting' | 'stopped'; detail: string }
 
@@ -74,7 +78,7 @@ async function advance(admin: SupabaseClient, run: Run) {
   const save = (patch: Record<string, unknown>) =>
     admin.from('workflow_runs').update({ ...patch, log, state, updated_at: new Date().toISOString() }).eq('id', run.id)
 
-  const { data: wf } = await admin.from('workflows').select('id, name, is_active, archived_at, nodes, edges, funnel_id, event_id').eq('id', run.workflow_id).maybeSingle()
+  const { data: wf } = await admin.from('workflows').select('id, name, is_active, archived_at, nodes, edges, funnel_id, event_id, webinar_id').eq('id', run.workflow_id).maybeSingle()
   if (!wf) return save({ status: 'stopped', error: 'The workflow was deleted.' })
   if (wf.archived_at) return save({ status: 'stopped', error: 'The workflow was deleted.' })
   // a test run works while the workflow is off
@@ -93,6 +97,12 @@ async function advance(admin: SupabaseClient, run: Run) {
     const info = await leadInfo(admin, run.lead_id)
     Object.assign(ctx.vars, info.vars)
     ctx.leadPhone = info.leadPhone
+  }
+  // the webinar date of the run (Before / After webinar, or registered earlier in it): its title, times and the lead's link
+  const evId = run.event_id ?? state.event_id ?? null
+  if (evId) {
+    const { data: ev } = await admin.from('events').select('*').eq('id', evId).maybeSingle()
+    if (ev) Object.assign(ctx.vars, await webinarVars(admin, ev, run.lead_id))
   }
   // values made by earlier steps of this run (generated links)
   Object.assign(ctx.vars, state.vars ?? {})
@@ -136,7 +146,15 @@ async function advance(admin: SupabaseClient, run: Run) {
       const rows = ((d.rows ?? []) as Record<string, unknown>[])
         .map((r, idx) => ({ r, idx, min: sign(r) * (Number(r.amount) || 0) * ((UNIT_MS[String(r.unit)] ?? UNIT_MS.minutes) / 60_000) }))
         .sort((a, b) => a.min - b.min || a.idx - b.idx)
-      let k = state.bulk && state.bulk.node === n.id ? state.bulk.i : 0
+      const entering = !(state.bulk && state.bulk.node === n.id)
+      let k = entering ? 0 : state.bulk!.i
+      // "Skip messages already past": on reaching the step, the ones whose time has gone (e.g. "1 day before" for someone
+      // who registered an hour before the webinar) aren't sent
+      if (entering && d.skip_past) {
+        const from = k
+        while (k < rows.length && start + rows[k].min * 60_000 < Date.now() - 60_000) k++
+        if (k > from) note(n, 'skipped', `${k - from} message${k - from > 1 ? 's' : ''} already past when the step started: not sent.`)
+      }
       while (k < rows.length) {
         const stop = d.stop as Cond | undefined
         const stopNow = d.stop_on && !run.is_test && (stop?.field?.startsWith('v:') ? matchVar(stop, ctx.vars) : !!run.lead_id && (await matches(admin, run.lead_id, stop)))
@@ -261,6 +279,56 @@ async function advance(admin: SupabaseClient, run: Run) {
       const names = Object.keys(pass)
       note(n, 'ok', `Went to "${next.name}"${names.length ? ` · passed ${names.join(', ')}` : ''}`)
       return save({ status: 'done', node_id: n.id, error: null })
+    } else if (n.type === 'register_webinar') {
+      try {
+        const r = await registerWebinar(admin, run, wf as Record<string, unknown>, d, ctx)
+        if ('wait' in r) {
+          state.tries = (state.tries ?? 0) + 1
+          if (state.tries > 8) {
+            note(n, 'failed', r.wait)
+            return save({ status: 'failed', node_id: at, error: r.wait })
+          }
+          // the Zoom webinar of a just-added date is being made: try again shortly
+          return save({ status: 'waiting', node_id: at, next_at: new Date(Date.now() + 20_000).toISOString() })
+        }
+        state.tries = 0
+        state.event_id = r.eventId
+        state.vars = { ...(state.vars ?? {}), ...r.vars }
+        Object.assign(ctx.vars, r.vars)
+        note(n, 'ok', r.detail)
+      } catch (e) {
+        note(n, 'failed', (e as Error).message)
+        return save({ status: 'failed', node_id: at, error: (e as Error).message })
+      }
+    } else if (n.type === 'wait_zoom') {
+      // Wait until Zoom data is in: the webinar has ended and its attendance / Q&A / chat / polls were fetched
+      // (tried every 5 minutes from 5 minutes after the end); after 2 hours without any, it carries on
+      const ev = await runEvent(admin, run, wf as Record<string, unknown>, state)
+      if (!ev) {
+        const msg = 'No webinar date for this lead: register them first (Register for webinar) or start from a Before / After webinar trigger.'
+        note(n, 'failed', msg)
+        return save({ status: 'failed', node_id: at, error: msg })
+      }
+      const endAt = Date.parse(`${ev.event_date}T${String(ev.end_time ?? ev.start_time ?? '23:00').slice(0, 5)}:00+05:30`)
+      if (Number(ev.zoom_pull_count ?? 0) >= 1) note(n, 'ok', `Zoom data of “${ev.title}” (${ev.event_date}) is in`)
+      else if (!ev.zoom_webinar_id || Date.now() > endAt + 130 * 60_000) note(n, 'ok', `No Zoom data for “${ev.title}” ${ev.zoom_webinar_id ? '2 hours after the end' : '(no Zoom webinar)'}: carried on without it`)
+      else {
+        const next = Math.max(Date.now() + 60_000, endAt + 5 * 60_000)
+        const last = log[log.length - 1]
+        if (!last || last.node_id !== n.id || last.status !== 'waiting') note(n, 'waiting', `Waiting for Zoom's data of “${ev.title}” (checked every minute after the end)`)
+        // node_id stays on the step before, so the next run checks again
+        return save({ status: 'waiting', node_id: at, next_at: new Date(next).toISOString() })
+      }
+    } else if (n.type === 'webinar_analytics') {
+      try {
+        const r = await webinarAnalytics(admin, run, wf as Record<string, unknown>, state)
+        state.vars = { ...(state.vars ?? {}), ...r.vars }
+        Object.assign(ctx.vars, r.vars)
+        note(n, 'ok', r.detail)
+      } catch (e) {
+        note(n, 'failed', (e as Error).message)
+        return save({ status: 'failed', node_id: at, error: (e as Error).message })
+      }
     } else if (n.type === 'wait') {
       const ms = Math.max(1, Number(d.amount) || 1) * (UNIT_MS[String(d.unit)] ?? UNIT_MS.days)
       const until = new Date(Date.now() + ms)
@@ -373,6 +441,16 @@ async function matches(admin: SupabaseClient, leadId: string, raw: Cond | undefi
   const c = normalizeCond(raw)
   const op = c.op
 
+  if (c.field === 'customer') {
+    // a customer: a purchase with a paid part, or a confirmed / completed booking
+    const { count: p } = await admin.from('purchases').select('id', { count: 'exact', head: true }).eq('lead_id', leadId).eq('status', 'active').gt('paid_amount', 0)
+    let has = (p ?? 0) > 0
+    if (!has) {
+      const { count: b } = await admin.from('bookings').select('id', { count: 'exact', head: true }).eq('lead_id', leadId).in('status', ['confirmed', 'completed'])
+      has = (b ?? 0) > 0
+    }
+    return op === 'not_exists' ? !has : has
+  }
   if (c.field === 'meeting' || c.field === 'payment') {
     let has = false
     if (c.field === 'meeting') {
@@ -387,6 +465,10 @@ async function matches(admin: SupabaseClient, leadId: string, raw: Cond | undefi
       }
       if (!has) {
         const { count } = await admin.from('lead_submissions').select('id', { count: 'exact', head: true }).eq('lead_id', leadId).eq('result', 'payment')
+        has = (count ?? 0) > 0
+      }
+      if (!has) {
+        const { count } = await admin.from('purchases').select('id', { count: 'exact', head: true }).eq('lead_id', leadId).eq('status', 'active').gt('paid_amount', 0)
         has = (count ?? 0) > 0
       }
     }
@@ -820,6 +902,194 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
   // the team member it went to, for later messages ({{member_name}}, {{member_email}}, {{member_phone}})
   const member = d.meet_mode === 'webhook' ? { member_name: hostName ?? '', member_email: hostProfile?.email ?? '', member_phone: hostProfile?.phone ?? '' } : {}
   return { id: String(z.id), when: `${date} ${time}`, host: hostName, vars: { ...vars(z), ...member } }
+}
+
+// ---------------- webinars ----------------
+type Row = Record<string, unknown>
+const hm = (t: unknown) => String(t ?? '').slice(0, 5)
+
+/** the zoom function (as the database calls it) */
+async function zoomFn(admin: SupabaseClient, body: Record<string, unknown>) {
+  const { data: secret } = await admin.rpc('workflow_cron_secret')
+  const res = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/zoom`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-cron-secret': String(secret ?? '') },
+    body: JSON.stringify(body),
+  })
+  const z = await res.json().catch(() => ({}))
+  if (!res.ok || z.error) throw new Error(z.error ?? `Zoom error ${res.status}`)
+  return z as Record<string, string>
+}
+
+/** a webinar date's values for messages (and the lead's own link on it) */
+async function webinarVars(admin: SupabaseClient, ev: Row, leadId: string | null): Promise<Record<string, string>> {
+  const { data: reg } = leadId
+    ? await admin.from('webinar_registrations').select('join_url, short_link').eq('event_id', String(ev.id)).eq('lead_id', leadId).maybeSingle()
+    : { data: null }
+  return webinarVarsOf(ev, reg)
+}
+function webinarVarsOf(ev: Row, reg: { join_url?: string | null; short_link?: string | null } | null): Record<string, string> {
+  const date = String(ev.event_date)
+  const start = hm(ev.start_time) || '00:00'
+  const end = hm(ev.end_time) || start
+  const short = String(reg?.short_link ?? '')
+  return {
+    webinar_title: String(ev.title ?? ''),
+    webinar_date: date,
+    webinar_time: start,
+    webinar_start: `${date} ${start}`,
+    webinar_end: `${date} ${end}`,
+    webinar_date_time: whenText(date, start, end),
+    webinar_join_link: String(reg?.join_url ?? ''),
+    webinar_short_link: short,
+    webinar_short_link_code: short ? short.split('/').pop() ?? '' : '',
+    event_title: String(ev.title ?? ''),
+    event_date: niceDate(date),
+    event_time: niceTime(start),
+    event_link: short || String(reg?.join_url ?? '') || String(ev.meeting_link ?? ''),
+  }
+}
+
+/** the webinar date of this run: its own (Before / After webinar), the one registered earlier in it, else the lead's latest */
+async function runEvent(admin: SupabaseClient, run: Run, wf: Row, state: NonNullable<Run['state']>): Promise<Row | null> {
+  let id = run.event_id ?? state.event_id ?? null
+  if (!id && run.lead_id) {
+    let q = admin.from('webinar_registrations').select('event_id').eq('lead_id', run.lead_id)
+    if (wf.webinar_id) q = q.eq('webinar_id', String(wf.webinar_id))
+    const { data } = await q.order('created_at', { ascending: false }).limit(1).maybeSingle()
+    id = (data?.event_id as string | undefined) ?? null
+  }
+  if (!id) return null
+  const { data: ev } = await admin.from('events').select('*').eq('id', id).maybeSingle()
+  return (ev as Row | null) ?? null
+}
+
+/**
+ * Register for webinar: the lead on the webinar's coming date (the next one; if one is on now, the one after), on Zoom
+ * with their own join link (and a short link of it). Registering again for the same date gives the same link.
+ */
+async function registerWebinar(admin: SupabaseClient, run: Run, wf: Row, d: Record<string, unknown>, ctx: Ctx): Promise<{ wait: string } | { eventId: string; vars: Record<string, string>; detail: string }> {
+  if (!run.lead_id) throw new Error(run.is_test ? 'A test run has no lead to register: try it with a real form post.' : 'No lead to register: add a Get lead details step before this one.')
+  let webinarId = String(d.webinar_id ?? '') || String(wf.webinar_id ?? '')
+  if (!webinarId && wf.funnel_id) {
+    const { data } = await admin.from('webinars').select('id').eq('funnel_id', String(wf.funnel_id)).is('archived_at', null).order('created_at', { ascending: false }).limit(1).maybeSingle()
+    webinarId = (data?.id as string | undefined) ?? ''
+  }
+  if (!webinarId) throw new Error('Pick the webinar to register for.')
+  const { data: w } = await admin.from('webinars').select('id, title, tenant_id, archived_at').eq('id', webinarId).maybeSingle()
+  if (!w || w.tenant_id !== run.tenant_id || w.archived_at) throw new Error('The webinar was deleted.')
+  const { data: eventId, error } = await admin.rpc('webinar_upcoming', { p_webinar: webinarId })
+  if (error) throw new Error(error.message)
+  if (!eventId) throw new Error(`“${w.title}” has no coming date to register for.`)
+  const { data: ev } = await admin.from('events').select('*').eq('id', String(eventId)).maybeSingle()
+  if (!ev) throw new Error('The webinar date was deleted.')
+  if (!ev.zoom_webinar_id) {
+    if (ev.zoom_error) throw new Error(`The Zoom webinar of ${niceDate(ev.event_date)} couldn't be made: ${ev.zoom_error}`)
+    if (!ev.zoom_account_id) throw new Error('The webinar has no Zoom account.')
+    return { wait: `The Zoom webinar of ${niceDate(ev.event_date)} isn't ready yet.` }
+  }
+
+  let { data: reg } = await admin.from('webinar_registrations').select('*').eq('event_id', ev.id).eq('lead_id', run.lead_id).maybeSingle()
+  let fresh = false
+  if (!reg) {
+    const { data: lead } = await admin.from('leads').select('first_name, last_name, email, phone').eq('id', run.lead_id).maybeSingle()
+    const email = String(lead?.email ?? '').trim()
+    if (!email) throw new Error('The lead has no email: Zoom needs one to register them.')
+    const z = await zoomFn(admin, { action: 'register', event_id: ev.id, email, first_name: lead?.first_name ?? '', last_name: lead?.last_name ?? '', phone: lead?.phone ?? '' })
+    const { data: ins, error: insErr } = await admin
+      .from('webinar_registrations')
+      .upsert({ tenant_id: run.tenant_id, webinar_id: webinarId, event_id: ev.id, lead_id: run.lead_id, registrant_id: z.registrant_id || null, join_url: z.join_url }, { onConflict: 'event_id,lead_id' })
+      .select('*')
+      .single()
+    if (insErr) throw new Error(insErr.message)
+    reg = ins
+    fresh = true
+    await admin.from('lead_activities').insert({
+      tenant_id: run.tenant_id,
+      lead_id: run.lead_id,
+      kind: 'note',
+      note: `Registered for the webinar “${ev.title}” on ${niceDate(ev.event_date)} at ${niceTime(hm(ev.start_time))}`,
+    })
+  }
+  if (d.short_link !== false && reg && reg.join_url && !reg.short_link) {
+    const s = await makeShortLink(admin, run, { url: reg.join_url, var: 'webinar_short_link', base_url: d.base_url }, ctx)
+    await admin.from('webinar_registrations').update({ short_link: s.short }).eq('id', reg.id)
+    reg.short_link = s.short
+  }
+  const vars = webinarVarsOf(ev, reg)
+  return {
+    eventId: String(ev.id),
+    vars,
+    detail: `${fresh ? 'Registered' : 'Already registered'} for “${ev.title}” on ${niceDate(ev.event_date)} ${niceTime(hm(ev.start_time))}: ${vars.webinar_short_link || vars.webinar_join_link}`,
+  }
+}
+
+const CATEGORY: Record<string, string> = { super_hot: 'Super Hot', hot: 'Hot', warm: 'Warm', cold: 'Cold' }
+/**
+ * How active the lead was in the webinar. Temporary rules (to be replaced by the client's):
+ * didn't join → Cold; stayed 75%+ and asked / chatted / answered a poll → Super Hot; stayed 50%+ → Hot; else Warm.
+ */
+function categorize(a: { attended: boolean; percent: number; questions: number; chats: number; polls: number }) {
+  if (!a.attended) return 'cold'
+  if (a.percent >= 75 && a.questions + a.chats + a.polls > 0) return 'super_hot'
+  if (a.percent >= 50) return 'hot'
+  return 'warm'
+}
+
+/** Get webinar analytics: the lead's attendance, Q&A, chat and polls on the webinar date → their category (kept on the registration) */
+async function webinarAnalytics(admin: SupabaseClient, run: Run, wf: Row, state: NonNullable<Run['state']>) {
+  if (!run.lead_id) throw new Error('No lead: the analytics are the lead’s.')
+  const ev = await runEvent(admin, run, wf, state)
+  if (!ev) throw new Error('No webinar date for this lead: register them first or start from a Before / After webinar trigger.')
+  const { data: lead } = await admin.from('leads').select('email').eq('id', run.lead_id).maybeSingle()
+  const email = String(lead?.email ?? '').trim().toLowerCase()
+  const who = email ? `lead_id.eq.${run.lead_id},email.eq.${email}` : `lead_id.eq.${run.lead_id}`
+  const [{ data: att }, { data: com }] = await Promise.all([
+    admin.from('zoom_attendance').select('minutes, join_time, leave_time').eq('event_id', String(ev.id)).or(who),
+    admin.from('zoom_comments').select('kind').eq('event_id', String(ev.id)).or(who),
+  ])
+  const rows = (att ?? []) as { minutes: number | null; join_time: string | null; leave_time: string | null }[]
+  const minutes = rows.reduce((n, r) => n + (Number(r.minutes) || 0), 0)
+  const toMin = (t: unknown) => {
+    const [h, m] = hm(t).split(':').map(Number)
+    return h * 60 + m
+  }
+  const duration = Math.max(1, toMin(ev.end_time ?? ev.start_time) - toMin(ev.start_time))
+  const percent = Math.min(100, Math.round((minutes / duration) * 100))
+  const kinds = ((com ?? []) as { kind: string }[]).map((c) => c.kind)
+  const questions = kinds.filter((k) => k === 'qa').length
+  const chats = kinds.filter((k) => k === 'chat').length
+  const polls = kinds.filter((k) => k === 'poll').length
+  const attended = rows.length > 0
+  const cat = categorize({ attended, percent, questions, chats, polls })
+  const joined = rows.map((r) => r.join_time).filter(Boolean).sort()[0] ?? null
+  if (ev.webinar_id)
+    await admin
+      .from('webinar_registrations')
+      .upsert(
+        { tenant_id: run.tenant_id, webinar_id: ev.webinar_id, event_id: ev.id, lead_id: run.lead_id, category: cat, attended_minutes: minutes, categorized_at: new Date().toISOString() },
+        { onConflict: 'event_id,lead_id' },
+      )
+  await admin.from('lead_activities').insert({
+    tenant_id: run.tenant_id,
+    lead_id: run.lead_id,
+    kind: 'note',
+    note: `Webinar “${ev.title}” (${niceDate(String(ev.event_date))}): ${CATEGORY[cat]} · ${attended ? `attended ${minutes} min (${percent}%)` : 'didn’t join'}${questions ? ` · ${questions} question${questions > 1 ? 's' : ''}` : ''}${chats ? ` · ${chats} chat` : ''}${polls ? ` · ${polls} poll answer${polls > 1 ? 's' : ''}` : ''}`,
+  })
+  const vars: Record<string, string> = {
+    webinar_category: CATEGORY[cat],
+    webinar_attended: attended ? 'Yes' : 'No',
+    webinar_minutes: String(minutes),
+    webinar_attended_percent: String(percent),
+    webinar_questions: String(questions),
+    webinar_chats: String(chats),
+    webinar_polls: String(polls),
+    webinar_joined_at: joined ? (() => {
+      const p = istParts(Date.parse(joined))
+      return `${p.date} ${p.time}`
+    })() : '',
+  }
+  return { vars, detail: `${CATEGORY[cat]}: ${attended ? `attended ${minutes} of ${duration} min (${percent}%)` : 'didn’t join'} · ${questions} Q&A · ${chats} chat · ${polls} poll` }
 }
 
 /** Bulk WhatsApp: the moment its times count from */

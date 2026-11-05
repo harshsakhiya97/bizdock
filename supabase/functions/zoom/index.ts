@@ -6,6 +6,7 @@
 //   { action: 'cron' }                                        pull attendance / Q&A / chat for everything that has ended
 //   { action: 'create_adhoc', tenant_id, account?, topic, start, duration }   workflow step (no lead) → { id, join_url, password, start_url }
 //   { action: 'book_meeting', meeting_id, account?, topic? }  workflow step: the Zoom meeting of a CRM meeting it just added
+//   { action: 'register', event_id, email, first_name, last_name?, phone? }   workflow step (Register for webinar) → { registrant_id, join_url }
 // From the app (the caller's login decides what they may do):
 //   { action: 'test', id }                                    check an account's keys (Settings & integrations)
 //   { action: 'pull', kind, id }                              fetch attendance / comments now
@@ -98,7 +99,7 @@ const minutesBetween = (a: string, b: string) => {
 }
 
 // ---------------- create / update / delete ----------------
-async function upsertZoom(a: Account, kind: 'meeting' | 'webinar', zoomId: string | null, topic: string, date: string, start: string, end: string | null) {
+async function upsertZoom(a: Account, kind: 'meeting' | 'webinar', zoomId: string | null, topic: string, date: string, start: string, end: string | null, registration = false) {
   const body = {
     topic: topic.slice(0, 200),
     type: kind === 'webinar' ? 5 : 2,
@@ -107,8 +108,13 @@ async function upsertZoom(a: Account, kind: 'meeting' | 'webinar', zoomId: strin
     duration: end ? minutesBetween(start, end) : 60,
     settings:
       kind === 'webinar'
-        ? { auto_recording: a.cloud_record ? 'cloud' : 'none', question_and_answer: { enable: true } }
-        : { join_before_host: true, waiting_room: false, auto_recording: a.cloud_record ? 'cloud' : 'none' },
+        ? {
+            auto_recording: a.cloud_record ? 'cloud' : 'none',
+            question_and_answer: { enable: true },
+            // a webinar of a Webinar business: people are registered by the workflow (approved straight away), each with their own link
+            ...(registration ? { approval_type: 0 } : {}),
+          }
+        : { join_before_host: true, waiting_room: false, auto_recording: a.cloud_record ? 'cloud' : 'none', ...(registration ? { approval_type: 0 } : {}) },
   }
   const base = kind === 'webinar' ? 'webinars' : 'meetings'
   if (zoomId) {
@@ -181,7 +187,7 @@ async function syncEvent(admin: SupabaseClient, id: string) {
   if (!a) return { skipped: true }
   try {
     const topic = ev.topic ? `${ev.title} — ${ev.topic}` : ev.title
-    const z = await upsertZoom(a, ev.zoom_kind === 'webinar' ? 'webinar' : 'meeting', ev.zoom_webinar_id, topic, ev.event_date, ev.start_time, ev.end_time)
+    const z = await upsertZoom(a, ev.zoom_kind === 'webinar' ? 'webinar' : 'meeting', ev.zoom_webinar_id, topic, ev.event_date, ev.start_time, ev.end_time, !!ev.webinar_id)
     await admin
       .from('events')
       .update({ zoom_webinar_id: z.id, meeting_link: z.join_url || ev.meeting_link, zoom_start_url: z.start_url, zoom_password: z.password, zoom_error: null, zoom_pull_count: 0, zoom_pulled_at: null })
@@ -274,6 +280,14 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
     const { data: ls } = await q
     for (const l of ls ?? []) leadByEmail.set(norm(l.email), l.id)
   }
+  // a webinar date: the leads registered for it (by the email they registered with)
+  if (kind === 'event' && row.webinar_id) {
+    const { data: regs } = await admin.from('webinar_registrations').select('lead_id, leads(email)').eq('event_id', id)
+    for (const r of (regs ?? []) as unknown as { lead_id: string; leads: { email: string | null } | null }[]) {
+      const e = norm(r.leads?.email)
+      if (e && !leadByEmail.has(e)) leadByEmail.set(e, r.lead_id)
+    }
+  }
   let meetingLead: { id: string; email: string; first: string } | null = null
   if (kind === 'meeting') {
     const { data: l } = await admin.from('leads').select('id, email, first_name').eq('id', row.lead_id).maybeSingle()
@@ -326,6 +340,33 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
     if (isWebinar) notes.push(`Q&A: ${(e as Error).message}`)
   }
 
+  // 2b. polls (webinars): each answer kept as question → answer
+  let pollsFound = false
+  if (isWebinar) {
+    try {
+      const pl = await zoom(a, 'GET', `/past_webinars/${zoomId}/polls`).catch(() => zoom(a, 'GET', `/report/webinars/${zoomId}/polls`))
+      pollsFound = true
+      for (const q of (pl.questions as Row[]) ?? []) {
+        const email = norm(q.email)
+        const name = String(q.name ?? '').trim()
+        for (const d of (q.question_details as Row[]) ?? []) {
+          if (!d.question) continue
+          comments.push({
+            kind: 'poll',
+            name: name || null,
+            email: email || null,
+            lead_id: leadFor(email, name),
+            body: String(d.question),
+            answer: d.answer != null ? String(d.answer) : null,
+            said_at: d.date_time ? String(d.date_time) : null,
+          })
+        }
+      }
+    } catch (e) {
+      if (!(e instanceof ZoomError) || (e.status !== 404 && e.code !== 3001 && e.code !== 12702)) notes.push(`Polls: ${(e as Error).message}`)
+    }
+  }
+
   // 3. chat, from the cloud recording
   let chatFound = false
   try {
@@ -351,7 +392,8 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
   }
   const qaRows = comments.filter((c) => c.kind === 'qa')
   const chatRows = comments.filter((c) => c.kind === 'chat')
-  for (const [k, rows, got] of [['qa', qaRows, qaRows.length > 0], ['chat', chatRows, chatFound]] as const) {
+  const pollRows = comments.filter((c) => c.kind === 'poll')
+  for (const [k, rows, got] of [['qa', qaRows, qaRows.length > 0], ['chat', chatRows, chatFound], ['poll', pollRows, pollsFound && pollRows.length > 0]] as const) {
     if (!got) continue
     await admin.from('zoom_comments').delete().eq(kind === 'meeting' ? 'meeting_id' : 'event_id', id).eq('kind', k)
     if (rows.length)
@@ -383,7 +425,7 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
       zoom_error: notes.length && !att.length && !retry ? notes.join(' · ') : null,
     })
     .eq('id', id)
-  return { ok: true, attendees: att.length, questions: qaRows.length, chat: chatRows.length, chat_found: chatFound, notes }
+  return { ok: true, attendees: att.length, questions: qaRows.length, polls: pollRows.length, chat: chatRows.length, chat_found: chatFound, notes }
 }
 
 // ---------------- handler ----------------
@@ -435,6 +477,26 @@ Deno.serve(async (req) => {
         return json(z)
       } catch (e) {
         await admin.from('meetings').update({ zoom_account_id: acc.id, zoom_error: (e as Error).message }).eq('id', m.id)
+        return fail((e as Error).message)
+      }
+    }
+    if (action === 'register') {
+      // Register for webinar: the lead on this date's Zoom webinar → their own join link
+      const { data: ev } = await admin.from('events').select('*').eq('id', String(b.event_id ?? '')).maybeSingle()
+      if (!ev) return fail('Webinar date not found.')
+      if (!ev.zoom_webinar_id) return fail(ev.zoom_error ? `The Zoom webinar isn't made yet: ${ev.zoom_error}` : "The Zoom webinar isn't made yet.")
+      const acc = await loadAccount(admin, ev.zoom_account_id)
+      if (!acc) return fail('The webinar’s Zoom account was removed or switched off.')
+      const email = String(b.email ?? '').trim().toLowerCase()
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('Zoom needs an email to register the lead.')
+      const body: Row = { email, first_name: String(b.first_name ?? '').trim().slice(0, 64) || 'Guest' }
+      if (String(b.last_name ?? '').trim()) body.last_name = String(b.last_name).trim().slice(0, 64)
+      if (String(b.phone ?? '').trim()) body.phone = String(b.phone).trim()
+      try {
+        const r = await zoom(acc, 'POST', `/${ev.zoom_kind === 'webinar' ? 'webinars' : 'meetings'}/${ev.zoom_webinar_id}/registrants`, body)
+        if (!r.join_url) return fail('Zoom gave no join link for the registration.')
+        return json({ registrant_id: String(r.registrant_id ?? r.id ?? ''), join_url: String(r.join_url) })
+      } catch (e) {
         return fail((e as Error).message)
       }
     }
