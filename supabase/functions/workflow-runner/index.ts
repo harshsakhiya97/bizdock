@@ -1216,6 +1216,35 @@ async function sendWhatsApp(admin: SupabaseClient, run: Run, workflowName: strin
     if (!to) throw new Error('The lead has no valid phone number.')
   }
 
+  // kept in WhatsApp logs (System Connections → WhatsApp → Logs), sent or failed
+  const logRow = {
+    tenant_id: run.tenant_id,
+    direction: 'out',
+    phone: to,
+    lead_id: !d.to || d.to === 'lead' ? run.lead_id : null,
+    template,
+    source: 'workflow',
+    workflow_id: run.workflow_id,
+    run_id: run.id,
+  }
+  try {
+    return await sendTemplate(admin, run, d, ctx, to, template, workflowName, logRow)
+  } catch (e) {
+    if (!run.is_test) await admin.from('whatsapp_logs').insert({ ...logRow, status: 'failed', error: (e as Error).message.slice(0, 300) })
+    throw e
+  }
+}
+
+async function sendTemplate(
+  admin: SupabaseClient,
+  run: Run,
+  d: Record<string, unknown>,
+  ctx: Ctx,
+  to: string,
+  template: string,
+  workflowName: string,
+  logRow: Record<string, unknown>,
+) {
   // the workspace's WATI connection
   const { data: integ } = await admin.from('integrations').select('config, is_enabled').eq('tenant_id', ctx.tenantId).eq('provider', 'whatsapp').maybeSingle()
   if (!integ) throw new Error('WhatsApp is not connected (System Connections).')
@@ -1252,9 +1281,17 @@ async function sendWhatsApp(admin: SupabaseClient, run: Run, workflowName: strin
     )
   }
 
+  const body = fill(String(d.template_body ?? d.message ?? ''), { ...ctx.vars, ...Object.fromEntries(parameters.map((p) => [p.name, p.value])) })
+  if (!run.is_test)
+    await admin.from('whatsapp_logs').insert({
+      ...logRow,
+      body,
+      params: Object.fromEntries(parameters.map((p) => [p.name, p.value])),
+      status: 'sent',
+      wati_id: out.local_message_id ? String(out.local_message_id) : null,
+    })
   // keep a copy on the lead (WhatsApp tab)
   if (run.lead_id && (!d.to || d.to === 'lead')) {
-    const body = fill(String(d.template_body ?? d.message ?? ''), { ...ctx.vars, ...Object.fromEntries(parameters.map((p) => [p.name, p.value])) })
     await admin.from('lead_messages').insert({ tenant_id: run.tenant_id, lead_id: run.lead_id, channel: 'whatsapp', title: template, body, via: 'workflow' })
   }
   return `Sent "${template}" to +${to}`

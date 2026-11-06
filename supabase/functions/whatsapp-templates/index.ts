@@ -3,6 +3,7 @@
 //   POST { tenant_id, action: 'list' }                          → { templates: [...] }
 //   POST { tenant_id, action: 'create', template: {...WATI body} } → { ok, result }
 //   POST { tenant_id, action: 'delete', waba_id, name, language }  → { ok }
+//   POST { tenant_id, action: 'send', phone, template, params, body?, lead_id? }  → { ok }  (WhatsApp logs → Chats; kept in the logs)
 //
 // The provider keys are read with the CALLER's token, so row security decides: only people with
 // "Settings & integrations" can read the integrations row. The keys never reach the browser.
@@ -124,6 +125,32 @@ Deno.serve(async (req) => {
         const d = await wati('DELETE', `/api/v1/whatsApp/templates/${encodeURIComponent(waba)}/${encodeURIComponent(name)}/${encodeURIComponent(lang)}`)
         if (d?.ok === false) return fail(`Delete failed: ${reason(d) ?? 'no reason given'}`)
         return json({ ok: true })
+      }
+      case 'send': {
+        // a template to one number (WhatsApp logs → Chats), kept in the logs
+        let to = String(body.phone ?? '').replace(/\D/g, '')
+        if (to.startsWith('00')) to = to.slice(2)
+        if (to.length === 11 && to.startsWith('0')) to = to.slice(1)
+        if (to.length === 10) to = `91${to}`
+        if (to.length < 11) return fail('Not a valid WhatsApp number.')
+        const template = String(body.template ?? '').trim()
+        if (!template) return fail('Pick a template.')
+        const params = Object.entries((body.params ?? {}) as Record<string, unknown>).map(([name, value]) => ({ name, value: String(value ?? '').trim() || '-' }))
+        const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
+        const { data: member } = await admin.from('tenant_members').select('id').eq('tenant_id', tenantId).eq('user_id', me.user.id).maybeSingle()
+        const leadId = typeof body.lead_id === 'string' && body.lead_id ? body.lead_id : null
+        const text = String(body.body ?? '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (m, k) => params.find((x) => x.name === k)?.value ?? m)
+        const log = { tenant_id: tenantId, direction: 'out', phone: to, lead_id: leadId, template, body: text || null, params: Object.fromEntries(params.map((x) => [x.name, x.value])), source: 'app', sent_by: member?.id ?? null }
+        try {
+          const d = await wati('POST', `/api/v1/sendTemplateMessage?whatsappNumber=${to}`, { template_name: template, broadcast_name: 'bizdock_chat', parameters: params })
+          if (d.result === false) throw new Error(reason(d) ?? `WATI didn't send it: check the template is approved and +${to} is on WhatsApp.`)
+          await admin.from('whatsapp_logs').insert({ ...log, status: 'sent', wati_id: d.local_message_id ? String(d.local_message_id) : null })
+          if (leadId) await admin.from('lead_messages').insert({ tenant_id: tenantId, lead_id: leadId, channel: 'whatsapp', title: template, body: text, via: 'app' })
+          return json({ ok: true })
+        } catch (e) {
+          await admin.from('whatsapp_logs').insert({ ...log, status: 'failed', error: (e as Error).message.slice(0, 300) })
+          throw e
+        }
       }
       default:
         return fail('Unknown action')
