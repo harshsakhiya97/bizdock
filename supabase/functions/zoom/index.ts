@@ -6,7 +6,8 @@
 //   { action: 'cron' }                                        pull attendance / Q&A / chat for everything that has ended
 //   { action: 'create_adhoc', tenant_id, account?, topic, start, duration }   workflow step (no lead) → { id, join_url, password, start_url }
 //   { action: 'book_meeting', meeting_id, account?, topic? }  workflow step: the Zoom meeting of a CRM meeting it just added
-//   { action: 'register', event_id, email, first_name, last_name?, phone? }   workflow step (Register for webinar) → { registrant_id, join_url }
+//   { action: 'register', event_id, email?, first_name, last_name?, phone }   workflow step (Register for webinar): a registrant of the date's
+//                                                             Zoom meeting (no email → <phone>@noemail.bizdock.in) → { registrant_id, join_url }
 // From the app (the caller's login decides what they may do):
 //   { action: 'test', id }                                    check an account's keys (Settings & integrations)
 //   { action: 'pull', kind, id }                              fetch attendance / comments now
@@ -90,6 +91,14 @@ async function zoomAll(a: Account, path: string, key: string) {
   return out
 }
 
+/** a lead without an email is registered on Zoom as <phone>@noemail.bizdock.in */
+const placeholderEmail = (phone: unknown) => {
+  let d = String(phone ?? '').replace(/\D/g, '')
+  if (d.startsWith('00')) d = d.slice(2)
+  if (d.length === 11 && d.startsWith('0')) d = d.slice(1)
+  if (d.length === 10) d = `91${d}`
+  return d.length >= 11 ? `${d}@noemail.bizdock.in` : ''
+}
 const hostOf = (a: Account) => encodeURIComponent((a.host_email ?? '').trim() || 'me')
 const hms = (t: string) => (t.length === 5 ? `${t}:00` : t.slice(0, 8))
 const minutesBetween = (a: string, b: string) => {
@@ -114,12 +123,36 @@ async function upsertZoom(a: Account, kind: 'meeting' | 'webinar', zoomId: strin
             // a webinar of a Webinar business: people are registered by the workflow (approved straight away), each with their own link
             ...(registration ? { approval_type: 0 } : {}),
           }
-        : { join_before_host: true, waiting_room: false, auto_recording: a.cloud_record ? 'cloud' : 'none', ...(registration ? { approval_type: 0 } : {}) },
+        : registration
+          ? {
+              // a date of a webinar (Webinar business): a Zoom meeting with registration required, people registered by the
+              // workflow (approved straight away, each with their own link); Zoom's own emails off; other settings Zoom's defaults
+              approval_type: 0,
+              registrants_email_notification: false,
+              registrants_confirmation_email: false,
+              auto_recording: a.cloud_record ? 'cloud' : 'none',
+            }
+          : { join_before_host: true, waiting_room: false, auto_recording: a.cloud_record ? 'cloud' : 'none' },
+  }
+  /** registration form: first name and email (always), last name and phone required too */
+  const questions = async (id: string) => {
+    if (kind !== 'meeting' || !registration) return
+    try {
+      await zoom(a, 'PATCH', `/meetings/${id}/registrants/questions`, {
+        questions: [
+          { field_name: 'last_name', required: true },
+          { field_name: 'phone', required: true },
+        ],
+      })
+    } catch (e) {
+      console.log('zoom registrant questions', id, (e as Error).message)
+    }
   }
   const base = kind === 'webinar' ? 'webinars' : 'meetings'
   if (zoomId) {
     try {
       await zoom(a, 'PATCH', `/${base}/${zoomId}`, body)
+      await questions(zoomId)
       const got = await zoom(a, 'GET', `/${base}/${zoomId}`)
       return { id: zoomId, join_url: String(got.join_url ?? ''), start_url: String(got.start_url ?? ''), password: String(got.password ?? '') }
     } catch (e) {
@@ -128,6 +161,7 @@ async function upsertZoom(a: Account, kind: 'meeting' | 'webinar', zoomId: strin
     }
   }
   const made = await zoom(a, 'POST', `/users/${hostOf(a)}/${base}`, body)
+  await questions(String(made.id))
   return { id: String(made.id), join_url: String(made.join_url ?? ''), start_url: String(made.start_url ?? ''), password: String(made.password ?? '') }
 }
 
@@ -282,10 +316,10 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
   }
   // a webinar date: the leads registered for it (by the email they registered with)
   if (kind === 'event' && row.webinar_id) {
-    const { data: regs } = await admin.from('webinar_registrations').select('lead_id, leads(email)').eq('event_id', id)
-    for (const r of (regs ?? []) as unknown as { lead_id: string; leads: { email: string | null } | null }[]) {
-      const e = norm(r.leads?.email)
-      if (e && !leadByEmail.has(e)) leadByEmail.set(e, r.lead_id)
+    const { data: regs } = await admin.from('webinar_registrations').select('lead_id, leads(email, phone)').eq('event_id', id)
+    for (const r of (regs ?? []) as unknown as { lead_id: string; leads: { email: string | null; phone: string | null } | null }[]) {
+      // the email they registered with: their own, else the placeholder from their phone
+      for (const e of [norm(r.leads?.email), placeholderEmail(r.leads?.phone)]) if (e && !leadByEmail.has(e)) leadByEmail.set(e, r.lead_id)
     }
   }
   let meetingLead: { id: string; email: string; first: string } | null = null
@@ -340,11 +374,13 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
     if (isWebinar) notes.push(`Q&A: ${(e as Error).message}`)
   }
 
-  // 2b. polls (webinars): each answer kept as question → answer
+  // 2b. polls (webinars, and the meetings of webinar dates): each answer kept as question → answer
   let pollsFound = false
-  if (isWebinar) {
+  if (isWebinar || (kind === 'event' && row.webinar_id)) {
     try {
-      const pl = await zoom(a, 'GET', `/past_webinars/${zoomId}/polls`).catch(() => zoom(a, 'GET', `/report/webinars/${zoomId}/polls`))
+      const pl = isWebinar
+        ? await zoom(a, 'GET', `/past_webinars/${zoomId}/polls`).catch(() => zoom(a, 'GET', `/report/webinars/${zoomId}/polls`))
+        : await zoom(a, 'GET', `/past_meetings/${zoomId}/polls`).catch(() => zoom(a, 'GET', `/report/meetings/${zoomId}/polls`))
       pollsFound = true
       for (const q of (pl.questions as Row[]) ?? []) {
         const email = norm(q.email)
@@ -487,11 +523,16 @@ Deno.serve(async (req) => {
       if (!ev.zoom_webinar_id) return fail(ev.zoom_error ? `The Zoom webinar isn't made yet: ${ev.zoom_error}` : "The Zoom webinar isn't made yet.")
       const acc = await loadAccount(admin, ev.zoom_account_id)
       if (!acc) return fail('The webinar’s Zoom account was removed or switched off.')
-      const email = String(b.email ?? '').trim().toLowerCase()
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('Zoom needs an email to register the lead.')
-      const body: Row = { email, first_name: String(b.first_name ?? '').trim().slice(0, 64) || 'Guest' }
-      if (String(b.last_name ?? '').trim()) body.last_name = String(b.last_name).trim().slice(0, 64)
-      if (String(b.phone ?? '').trim()) body.phone = String(b.phone).trim()
+      // no email → a placeholder from the phone (Zoom's own emails are off); no last name → "-"
+      let email = String(b.email ?? '').trim().toLowerCase()
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) email = placeholderEmail(b.phone)
+      if (!email) return fail('The lead has no email or phone: Zoom needs one to register them.')
+      const body: Row = {
+        email,
+        first_name: String(b.first_name ?? '').trim().slice(0, 64) || 'Guest',
+        last_name: String(b.last_name ?? '').trim().slice(0, 64) || '-',
+        phone: String(b.phone ?? '').trim() || '-',
+      }
       try {
         const r = await zoom(acc, 'POST', `/${ev.zoom_kind === 'webinar' ? 'webinars' : 'meetings'}/${ev.zoom_webinar_id}/registrants`, body)
         if (!r.join_url) return fail('Zoom gave no join link for the registration.')

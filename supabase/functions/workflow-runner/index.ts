@@ -993,8 +993,8 @@ async function registerWebinar(admin: SupabaseClient, run: Run, wf: Row, d: Reco
   let fresh = false
   if (!reg) {
     const { data: lead } = await admin.from('leads').select('first_name, last_name, email, phone').eq('id', run.lead_id).maybeSingle()
+    // no email: the Zoom function registers them with <phone>@noemail.bizdock.in
     const email = String(lead?.email ?? '').trim()
-    if (!email) throw new Error('The lead has no email: Zoom needs one to register them.')
     const z = await zoomFn(admin, { action: 'register', event_id: ev.id, email, first_name: lead?.first_name ?? '', last_name: lead?.last_name ?? '', phone: lead?.phone ?? '' })
     const { data: ins, error: insErr } = await admin
       .from('webinar_registrations')
