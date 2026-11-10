@@ -926,7 +926,15 @@ async function webinarVars(admin: SupabaseClient, ev: Row, leadId: string | null
   const { data: reg } = leadId
     ? await admin.from('webinar_registrations').select('join_url, short_link').eq('event_id', String(ev.id)).eq('lead_id', leadId).maybeSingle()
     : { data: null }
-  return webinarVarsOf(ev, reg)
+  return { ...webinarVarsOf(ev, reg), webinar_group_link: await groupLink(admin, ev) }
+}
+/** {{webinar_group_link}}: the webinar's WhatsApp group link (<app>/<its link>), which opens the current date's group */
+async function groupLink(admin: SupabaseClient, ev: Row) {
+  if (!ev.webinar_id) return ''
+  const { data: w } = await admin.from('webinars').select('wa_slug').eq('id', String(ev.webinar_id)).maybeSingle()
+  if (!w?.wa_slug) return ''
+  const base = await appUrl(admin, String(ev.tenant_id))
+  return base ? `${base}/${w.wa_slug}` : ''
 }
 function webinarVarsOf(ev: Row, reg: { join_url?: string | null; short_link?: string | null } | null): Record<string, string> {
   const date = String(ev.event_date)
@@ -1016,7 +1024,7 @@ async function registerWebinar(admin: SupabaseClient, run: Run, wf: Row, d: Reco
     await admin.from('webinar_registrations').update({ short_link: s.short }).eq('id', reg.id)
     reg.short_link = s.short
   }
-  const vars = webinarVarsOf(ev, reg)
+  const vars: Record<string, string> = { ...webinarVarsOf(ev, reg), webinar_group_link: await groupLink(admin, ev) }
   return {
     eventId: String(ev.id),
     vars,
