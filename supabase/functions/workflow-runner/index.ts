@@ -926,7 +926,26 @@ async function webinarVars(admin: SupabaseClient, ev: Row, leadId: string | null
   const { data: reg } = leadId
     ? await admin.from('webinar_registrations').select('join_url, short_link').eq('event_id', String(ev.id)).eq('lead_id', leadId).maybeSingle()
     : { data: null }
-  return { ...webinarVarsOf(ev, reg), webinar_group_link: await groupLink(admin, ev) }
+  return { ...webinarVarsOf(ev, reg), webinar_group_link: await groupLink(admin, ev), ...(await nextVars(admin, ev)) }
+}
+/** "Next webinar" fields: the webinar's next date after this one (made, else by its repeat); empty when there's none */
+async function nextVars(admin: SupabaseClient, ev: Row): Promise<Record<string, string>> {
+  const keys = ['next_webinar_title', 'next_webinar_date', 'next_webinar_time', 'next_webinar_start', 'next_webinar_end', 'next_webinar_date_time']
+  const none = Object.fromEntries(keys.map((k) => [k, '']))
+  if (!ev.webinar_id) return none
+  const { data } = await admin.rpc('webinar_next_after', { p_event: String(ev.id) })
+  const n = (Array.isArray(data) ? data[0] : data) as { event_date?: string; start_time?: string; end_time?: string; title?: string } | null
+  if (!n?.event_date) return none
+  const start = hm(n.start_time) || '00:00'
+  const end = hm(n.end_time) || start
+  return {
+    next_webinar_title: String(n.title ?? ''),
+    next_webinar_date: n.event_date,
+    next_webinar_time: start,
+    next_webinar_start: `${n.event_date} ${start}`,
+    next_webinar_end: `${n.event_date} ${end}`,
+    next_webinar_date_time: whenText(n.event_date, start, end),
+  }
 }
 /** {{webinar_group_link}}: the webinar's WhatsApp group link (<app>/<its link>), which opens the current date's group */
 async function groupLink(admin: SupabaseClient, ev: Row) {
@@ -1024,7 +1043,7 @@ async function registerWebinar(admin: SupabaseClient, run: Run, wf: Row, d: Reco
     await admin.from('webinar_registrations').update({ short_link: s.short }).eq('id', reg.id)
     reg.short_link = s.short
   }
-  const vars: Record<string, string> = { ...webinarVarsOf(ev, reg), webinar_group_link: await groupLink(admin, ev) }
+  const vars: Record<string, string> = { ...webinarVarsOf(ev, reg), webinar_group_link: await groupLink(admin, ev), ...(await nextVars(admin, ev)) }
   return {
     eventId: String(ev.id),
     vars,
