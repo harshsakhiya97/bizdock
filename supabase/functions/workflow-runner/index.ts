@@ -52,6 +52,13 @@ Deno.serve(async (req) => {
   const { data: secret } = await admin.rpc('workflow_cron_secret')
   if (!secret || req.headers.get('x-cron-secret') !== secret) return json({ error: 'Not allowed' }, 401)
 
+  // rescheduled / cancelled webinar messages first (a moved lead's cancel message goes before its new confirmation)
+  try {
+    await sendNotices(admin)
+  } catch (_) {
+    // the runs still go on
+  }
+
   let done = 0
   // a few batches per call, so a burst of submissions doesn't wait for the next minute
   for (let batch = 0; batch < 4; batch++) {
@@ -906,6 +913,39 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
 
 // ---------------- webinars ----------------
 type Row = Record<string, unknown>
+
+/**
+ * The webinar date's WhatsApp message to its registrants (webinar_notices): rescheduled (its new date) or cancelled
+ * (with "Next webinar"), one template with its variables filled from the lead and the date.
+ */
+async function sendNotices(admin: SupabaseClient) {
+  for (let batch = 0; batch < 4; batch++) {
+    const { data: rows, error } = await admin.rpc('webinar_claim_notices', { p_limit: 50 })
+    if (error || !rows?.length) return
+    for (const n of rows as Row[]) {
+      try {
+        const { data: ev } = await admin.from('events').select('*').eq('id', String(n.event_id)).maybeSingle()
+        if (!ev) throw new Error('The webinar date was deleted.')
+        const info = await leadInfo(admin, String(n.lead_id))
+        const ctx: Ctx = { tenantId: String(n.tenant_id), leadPhone: info.leadPhone, vars: { ...info.vars, ...(await webinarVars(admin, ev, String(n.lead_id))) } }
+        const run = { id: String(n.id), tenant_id: String(n.tenant_id), workflow_id: '', lead_id: String(n.lead_id), is_test: false } as Run
+        const template = String(n.template)
+        const to = waNumber(ctx.leadPhone)
+        const logRow = { tenant_id: run.tenant_id, direction: 'out', phone: to, lead_id: run.lead_id, template, source: 'app', sent_by: n.created_by ?? null }
+        try {
+          if (!to) throw new Error('The lead has no valid phone number.')
+          await sendTemplate(admin, run, { params: n.params ?? {}, template_body: n.template_body ?? '' }, ctx, to, template, n.kind === 'cancel' ? 'Webinar cancelled' : 'Webinar rescheduled', logRow)
+        } catch (e) {
+          await admin.from('whatsapp_logs').insert({ ...logRow, status: 'failed', error: (e as Error).message.slice(0, 300) })
+          throw e
+        }
+        await admin.from('webinar_notices').update({ status: 'sent', sent_at: new Date().toISOString(), error: null }).eq('id', n.id)
+      } catch (e) {
+        await admin.from('webinar_notices').update({ status: 'failed', error: (e as Error).message.slice(0, 300) }).eq('id', n.id)
+      }
+    }
+  }
+}
 const hm = (t: unknown) => String(t ?? '').slice(0, 5)
 
 /** the zoom function (as the database calls it) */
