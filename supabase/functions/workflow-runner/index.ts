@@ -10,7 +10,7 @@
 // details, Wait, Wait for event (until some time before / after a date-time field such as the Zoom meeting's start),
 // Switch / Yes-No and Go to workflow (with fields passed as the next workflow's variables); for Webinar businesses Register
 // for webinar (the lead on the coming date, with their own Zoom join link), Wait until Zoom data is in and Get webinar
-// analytics (attendance, Q&A, chat, polls → Super Hot / Hot / Warm / Cold). Before / After webinar runs carry their date
+// analytics (attendance, Q&A, chat, polls → the webinar's lead category by minutes attended). Before / After webinar runs carry their date
 // (event_id). Email and Call are skipped (logged) — they come later.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -1024,16 +1024,24 @@ async function registerWebinar(admin: SupabaseClient, run: Run, wf: Row, d: Reco
   }
 }
 
-const CATEGORY: Record<string, string> = { super_hot: 'Super Hot', hot: 'Hot', warm: 'Warm', cold: 'Cold' }
+/** a webinar's lead category (its Lead categories tab): minimum minutes attended; min null = Not joined */
+type WebinarCat = { key: string; name: string; min: number | null }
+const DEFAULT_CATS: WebinarCat[] = [
+  { key: 'super_hot', name: 'Super Hot', min: 90 },
+  { key: 'hot', name: 'Hot', min: 60 },
+  { key: 'warm', name: 'Warm', min: 30 },
+  { key: 'cold', name: 'Cold', min: 1 },
+  { key: 'not_joined', name: 'Not joined', min: null },
+]
 /**
- * How active the lead was in the webinar. Temporary rules (to be replaced by the client's):
- * didn't join → Cold; stayed 75%+ and asked / chatted / answered a poll → Super Hot; stayed 50%+ → Hot; else Warm.
+ * The lead's category by the minutes they attended: the highest category whose minimum they reach; joined but under
+ * the lowest → the lowest; didn't join → Not joined (minutes only, for now).
  */
-function categorize(a: { attended: boolean; percent: number; questions: number; chats: number; polls: number }) {
-  if (!a.attended) return 'cold'
-  if (a.percent >= 75 && a.questions + a.chats + a.polls > 0) return 'super_hot'
-  if (a.percent >= 50) return 'hot'
-  return 'warm'
+function categorize(cats: WebinarCat[], attended: boolean, minutes: number): WebinarCat {
+  const joined = cats.filter((c) => c.min != null).sort((a, b) => Number(b.min) - Number(a.min))
+  const none = cats.find((c) => c.min == null) ?? { key: 'not_joined', name: 'Not joined', min: null }
+  if (!attended) return none
+  return joined.find((c) => minutes >= Number(c.min)) ?? joined[joined.length - 1] ?? none
 }
 
 /** Get webinar analytics: the lead's attendance, Q&A, chat and polls on the webinar date → their category (kept on the registration) */
@@ -1061,23 +1069,26 @@ async function webinarAnalytics(admin: SupabaseClient, run: Run, wf: Row, state:
   const chats = kinds.filter((k) => k === 'chat').length
   const polls = kinds.filter((k) => k === 'poll').length
   const attended = rows.length > 0
-  const cat = categorize({ attended, percent, questions, chats, polls })
+  const { data: wb } = ev.webinar_id ? await admin.from('webinars').select('categories').eq('id', String(ev.webinar_id)).maybeSingle() : { data: null }
+  const cats = Array.isArray(wb?.categories) && wb.categories.length ? (wb.categories as WebinarCat[]) : DEFAULT_CATS
+  const cat = categorize(cats, attended, minutes)
   const joined = rows.map((r) => r.join_time).filter(Boolean).sort()[0] ?? null
   if (ev.webinar_id)
     await admin
       .from('webinar_registrations')
       .upsert(
-        { tenant_id: run.tenant_id, webinar_id: ev.webinar_id, event_id: ev.id, lead_id: run.lead_id, category: cat, attended_minutes: minutes, categorized_at: new Date().toISOString() },
+        { tenant_id: run.tenant_id, webinar_id: ev.webinar_id, event_id: ev.id, lead_id: run.lead_id, category: cat.key, category_name: cat.name, attended_minutes: minutes, categorized_at: new Date().toISOString() },
         { onConflict: 'event_id,lead_id' },
       )
   await admin.from('lead_activities').insert({
     tenant_id: run.tenant_id,
     lead_id: run.lead_id,
     kind: 'note',
-    note: `Webinar “${ev.title}” (${niceDate(String(ev.event_date))}): ${CATEGORY[cat]} · ${attended ? `attended ${minutes} min (${percent}%)` : 'didn’t join'}${questions ? ` · ${questions} question${questions > 1 ? 's' : ''}` : ''}${chats ? ` · ${chats} chat` : ''}${polls ? ` · ${polls} poll answer${polls > 1 ? 's' : ''}` : ''}`,
+    note: `Webinar “${ev.title}” (${niceDate(String(ev.event_date))}): ${cat.name} · ${attended ? `attended ${minutes} min (${percent}%)` : 'didn’t join'}${questions ? ` · ${questions} question${questions > 1 ? 's' : ''}` : ''}${chats ? ` · ${chats} chat` : ''}${polls ? ` · ${polls} poll answer${polls > 1 ? 's' : ''}` : ''}`,
   })
   const vars: Record<string, string> = {
-    webinar_category: CATEGORY[cat],
+    webinar_category: cat.name,
+    webinar_category_key: cat.key,
     webinar_attended: attended ? 'Yes' : 'No',
     webinar_minutes: String(minutes),
     webinar_attended_percent: String(percent),
@@ -1089,7 +1100,7 @@ async function webinarAnalytics(admin: SupabaseClient, run: Run, wf: Row, state:
       return `${p.date} ${p.time}`
     })() : '',
   }
-  return { vars, detail: `${CATEGORY[cat]}: ${attended ? `attended ${minutes} of ${duration} min (${percent}%)` : 'didn’t join'} · ${questions} Q&A · ${chats} chat · ${polls} poll` }
+  return { vars, detail: `${cat.name}: ${attended ? `attended ${minutes} of ${duration} min (${percent}%)` : 'didn’t join'} · ${questions} Q&A · ${chats} chat · ${polls} poll` }
 }
 
 /** Bulk WhatsApp: the moment its times count from */
