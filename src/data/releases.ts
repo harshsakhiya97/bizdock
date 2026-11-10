@@ -13,6 +13,22 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.12',
+    date: '2026-11-10',
+    title: 'Webinars, WhatsApp logs, webinar date widget',
+    summary: 'Database and function changes for the Webinar business type, its Zoom meetings and workflows, WhatsApp logs and the webinar date widget.',
+    new: [
+      'business_types (code fixed by a guard) with the WEBINAR type; webinar_hosts, products (kind product) and purchases / purchase_payments (paid amount kept by a trigger).',
+      'webinars (repeat once / dates / weekly, stop date, skipped dates, join slug and WhatsApp group slug, lead categories, registration cutoff) and webinar_registrations (join link, short link, category and its name, minutes attended); a webinar-roll cron makes each next date (an event with a Zoom meeting) at the registration cutoff.',
+      'webinar_groups (a WhatsApp group invite link per date); webinar_link_open (join link → the date on until it ends; group link → the date open for registration), webinar_link_taken (while typing), webinar_next_after (the next date), webinar_widget (public: the date open for registration).',
+      'Zoom function: webinar dates as meetings with registration required (last name and phone required, Zoom emails off), registering leads (placeholder email when they have none), polls for meetings.',
+      'Workflow runner: Register for webinar, Wait until Zoom data is in, Get webinar analytics with the webinar’s own categories by minutes attended; webinar, next webinar and WhatsApp group link variables; Before / After webinar runs per date.',
+      'leads.webinar_category kept from the latest categorization; login_email_for_phone for mobile login (failed tries limited).',
+      'whatsapp_logs and whatsapp_hooks; wati-webhook function (delivered / read / failed and replies); whatsapp-templates send action; the runner logs every send.',
+      'widgets kind webinar_date.',
+    ],
+  },
+  {
     version: '0.11',
     date: '2026-11-04',
     title: 'Booking Calendar fields, workflow runner upgrades',
