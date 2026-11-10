@@ -26,6 +26,8 @@ export const releases: Release[] = [
       'leads.webinar_category kept from the latest categorization; login_email_for_phone for mobile login (failed tries limited).',
       'whatsapp_logs and whatsapp_hooks; wati-webhook function (delivered / read / failed and replies); whatsapp-templates send action; the runner logs every send.',
       'widgets kind webinar_date.',
+      'webinars.moved_dates (dates rescheduled on their own, with their own times) and webinar_reschedule (only this / this and all future, kept between the dates around it; moves the event, its WhatsApp group and re-times waiting reminders); the next date and Next webinar fields use the moved times.',
+      'webinar_delete_date: calls off a date, stops its runs and optionally moves its registrations to the next date (moved_to_event / moved_to_date) and runs the registration workflow for each; webinar_notices (rescheduled / cancelled WhatsApp) sent by the workflow runner before the runs.',
     ],
   },
   {
