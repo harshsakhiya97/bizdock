@@ -22,6 +22,7 @@ export const releases: Release[] = [
       'zoom_oauth_states and zoom_oauth_tokens (server only); can_manage_integrations and zoom_oauth_result RPCs.',
       'zoom function: tokens of connected-with-Zoom accounts renewed with their refresh key (rotated, safe for parallel calls); lost → status error, Reconnect.',
       'Tenant app: public /privacy-policy, /terms and /support pages (linked from BizDock’s Zoom app listing) and /zoom-connect (where the popup ends).',
+      'saveIntegration returns the row id; Add with keys checks a Zoom Server-to-Server account with the zoom function’s test right after saving.',
     ],
   },
   {
