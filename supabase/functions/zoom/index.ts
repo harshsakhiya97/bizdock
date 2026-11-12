@@ -1,4 +1,4 @@
-// zoom: the workspace's Zoom accounts (Server-to-Server OAuth apps).
+// zoom: the workspace's Zoom accounts (Server-to-Server OAuth apps, or connected with Zoom through BizDock's app — zoom-oauth).
 //
 // From the database (header x-cron-secret):
 //   { action: 'sync', kind: 'meeting' | 'event', id }       create / move the Zoom meeting (or webinar) of a CRM meeting / calendar event
@@ -34,6 +34,8 @@ type Account = {
   client_secret: string
   host_email: string | null
   cloud_record: boolean
+  /** connected with Zoom (BizDock's app): its tokens are in zoom_oauth_tokens */
+  oauth: boolean
 }
 type Row = Record<string, unknown>
 
@@ -49,6 +51,7 @@ const tokens = new Map<string, { token: string; until: number }>()
 async function tokenFor(a: Account): Promise<string> {
   const hit = tokens.get(a.id)
   if (hit && hit.until > Date.now() + 60_000) return hit.token
+  if (a.oauth) return oauthToken(a)
   const res = await fetch(`https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(a.account_id.trim())}`, {
     method: 'POST',
     headers: { Authorization: `Basic ${btoa(`${a.client_id.trim()}:${a.client_secret.trim()}`)}` },
@@ -57,6 +60,43 @@ async function tokenFor(a: Account): Promise<string> {
   if (!res.ok || !body.access_token) throw new ZoomError(`Zoom login failed: ${body.reason ?? body.error ?? res.status}. Check the Account ID, Client ID and Client secret.`, res.status)
   tokens.set(a.id, { token: body.access_token, until: Date.now() + (Number(body.expires_in) || 3600) * 1000 })
   return body.access_token
+}
+
+/**
+ * A connected-with-Zoom account's token: the saved one while it lasts, else renewed with its refresh key (which Zoom
+ * replaces each time; if another call renewed it meanwhile, that one is used). Removed from Zoom → "Reconnect".
+ */
+async function oauthToken(a: Account): Promise<string> {
+  const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
+  const read = async () => (await db.from('zoom_oauth_tokens').select('*').eq('integration_id', a.id).maybeSingle()).data as { access_token: string; refresh_token: string; expires_at: string } | null
+  const keep = (t: { access_token: string; expires_at: string }) => {
+    tokens.set(a.id, { token: t.access_token, until: Date.parse(t.expires_at) })
+    return t.access_token
+  }
+  const reconnect = async (why: string) => {
+    const msg = `Zoom connection lost (${why}): press Reconnect in System Connections.`
+    await db.from('integrations').update({ status: 'error', last_error: msg }).eq('id', a.id)
+    return new ZoomError(msg, 401)
+  }
+  const t = await read()
+  if (!t) throw await reconnect('no login saved')
+  if (Date.parse(t.expires_at) > Date.now() + 60_000) return keep(t)
+  const id = (Deno.env.get('ZOOM_OAUTH_CLIENT_ID') ?? '').trim()
+  const secret = (Deno.env.get('ZOOM_OAUTH_CLIENT_SECRET') ?? '').trim()
+  const res = await fetch(`https://zoom.us/oauth/token?grant_type=refresh_token&refresh_token=${encodeURIComponent(t.refresh_token)}`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${btoa(`${id}:${secret}`)}` },
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || !body.access_token) {
+    // renewed by another call in the meantime?
+    const now = await read()
+    if (now && now.refresh_token !== t.refresh_token && Date.parse(now.expires_at) > Date.now() + 60_000) return keep(now)
+    throw await reconnect(String(body.reason ?? body.error ?? res.status))
+  }
+  const next = { access_token: String(body.access_token), refresh_token: String(body.refresh_token ?? t.refresh_token), expires_at: new Date(Date.now() + (Number(body.expires_in) || 3600) * 1000).toISOString() }
+  await db.from('zoom_oauth_tokens').update({ ...next, scope: body.scope ?? null, updated_at: new Date().toISOString() }).eq('integration_id', a.id).eq('refresh_token', t.refresh_token)
+  return keep(next)
 }
 
 async function zoom(a: Account, method: string, path: string, payload?: unknown) {
@@ -177,6 +217,7 @@ const toAccount = (r: Row): Account => {
     client_secret: c.client_secret ?? '',
     host_email: c.host_email ?? null,
     cloud_record: (c.cloud_record ?? 'Yes') !== 'No',
+    oauth: c.auth === 'oauth',
   }
 }
 
