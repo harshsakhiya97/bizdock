@@ -13,6 +13,17 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.13',
+    date: '2026-11-12',
+    title: 'Connect with Zoom (OAuth)',
+    summary: 'Zoom accounts connected through BizDock’s own Zoom app (OAuth popup) instead of a Server-to-Server app per workspace.',
+    new: [
+      'zoom-oauth function: start (state), Zoom’s return (code → tokens, users/me → the Zoom row in integrations with config.auth oauth), again / done for an already-connected login; the popup ends on the app’s /zoom-connect page. Secrets ZOOM_OAUTH_CLIENT_ID / ZOOM_OAUTH_CLIENT_SECRET.',
+      'zoom_oauth_states and zoom_oauth_tokens (server only); can_manage_integrations and zoom_oauth_result RPCs.',
+      'zoom function: tokens of connected-with-Zoom accounts renewed with their refresh key (rotated, safe for parallel calls); lost → status error, Reconnect.',
+    ],
+  },
+  {
     version: '0.12',
     date: '2026-11-10',
     title: 'Webinars, WhatsApp logs, webinar date widget',
