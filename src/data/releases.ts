@@ -22,6 +22,7 @@ export const releases: Release[] = [
       'meta-ads function: per ad account (lock), campaigns / ad sets / ads every 3 hours (meta_structure_put), history in 30-day steps from backfill_from (continues in a new run), then the last 7 days once a day, else yesterday and today (meta_insights_put, level ad, time_increment 1). Cron meta-ads-pull every 3 hours; sync from the app (can_sync_meta).',
       'Tables meta_oauth_states, meta_tokens, meta_ad_accounts (gst_rate, kept on disconnect), meta_campaigns, meta_adsets, meta_ads, meta_names (every name, for matching leads), meta_insights, funnel_ad_links (whole campaign or ad set; one funnel per ad set, guarded).',
       'funnel_ads_report (spend with GST, falls back to ad_spend on days without Facebook numbers; leads, stages, revenue, collected; per day and per ad), ad_spend_compare and ad_spend_replace.',
+      'meta-oauth action token: Add with a token — a system user’s token from the client’s Business Settings (for the BizDock app, ads_read), checked with Facebook (appsecret_proof) and saved the same way as a login (config.auth token); integration_id replaces the token of that connection.',
     ],
   },
   {
