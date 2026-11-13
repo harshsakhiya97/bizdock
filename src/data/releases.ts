@@ -26,6 +26,7 @@ export const releases: Release[] = [
     improved: [
       'calls readable with Call logs / Settings, else only calls to a number that is a lead the person can see; whatsapp_logs readable on any lead with that number.',
       'lead_list_extras checks access once per lead and counts in one pass (no statement timeout).',
+      'Team level rule: guard_member_level and can_manage_member allow the same level (not above, not the Owner, not your own role).',
     ],
   },
   {
