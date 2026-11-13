@@ -306,3 +306,8 @@ language sql stable security definer set search_path = '' as $$
 $$;
 revoke all on function public.can_sync_meta(uuid) from public, anon;
 grant execute on function public.can_sync_meta(uuid) to authenticated;
+
+-- disconnecting a Facebook login keeps its ad accounts and their numbers (reconnecting picks them up again)
+alter table public.meta_ad_accounts alter column integration_id drop not null;
+alter table public.meta_ad_accounts drop constraint if exists meta_ad_accounts_integration_id_fkey;
+alter table public.meta_ad_accounts add constraint meta_ad_accounts_integration_id_fkey foreign key (integration_id) references public.integrations(id) on delete set null;
