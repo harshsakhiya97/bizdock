@@ -25,6 +25,7 @@ export const releases: Release[] = [
       'meta-oauth action token: Add with a token — a system user’s token from the client’s Business Settings (for the BizDock app, ads_read), checked with Facebook (appsecret_proof) and saved the same way as a login (config.auth token); integration_id replaces the token of that connection.',
     ],
     improved: [
+      'Tenant app: Facebook Ads Logs page (/integrations/facebook-ads/logs) reads meta_campaigns / meta_adsets / meta_ads and meta_insights for the dates, 1,000 rows per call (metaLogs), sums per campaign / ad set / ad in the browser; account_status shown as Account disabled etc.',
       'Tenant app: shared PromptBox / FormPromptTabs (src/integrations/PromptBox.tsx) for the Zoom, Callyzer, WATI and Facebook token side panels; watiPrompt in providers.ts (API Docs + webhook with the workspace’s wati-webhook URL).',
     ],
   },
