@@ -13,6 +13,18 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.15',
+    date: '2026-11-13',
+    title: 'Facebook Ads (Meta Marketing API)',
+    summary: 'BizDock’s Meta app (Facebook Login for Business, system-user token, ads_read), daily per-ad numbers, funnel ad links and the funnel ads report.',
+    new: [
+      'meta-oauth function: start (config_id, response_type code) and Facebook’s return (code → never-expiring system-user token in meta_tokens, me/adaccounts → meta_ad_accounts), popup ends on /meta-connect. Secrets META_APP_ID, META_APP_SECRET, META_CONFIG_ID; appsecret_proof on every call.',
+      'meta-ads function: per ad account (lock), campaigns / ad sets / ads every 3 hours (meta_structure_put), history in 30-day steps from backfill_from (continues in a new run), then the last 7 days once a day, else yesterday and today (meta_insights_put, level ad, time_increment 1). Cron meta-ads-pull every 3 hours; sync from the app (can_sync_meta).',
+      'Tables meta_oauth_states, meta_tokens, meta_ad_accounts (gst_rate, kept on disconnect), meta_campaigns, meta_adsets, meta_ads, meta_names (every name, for matching leads), meta_insights, funnel_ad_links (whole campaign or ad set; one funnel per ad set, guarded).',
+      'funnel_ads_report (spend with GST, falls back to ad_spend on days without Facebook numbers; leads, stages, revenue, collected; per day and per ad), ad_spend_compare and ad_spend_replace.',
+    ],
+  },
+  {
     version: '0.14',
     date: '2026-11-13',
     title: 'Callyzer, Paid Podcast import, calls by number',
