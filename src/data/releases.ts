@@ -24,6 +24,9 @@ export const releases: Release[] = [
       'funnel_ads_report (spend with GST, falls back to ad_spend on days without Facebook numbers; leads, stages, revenue, collected; per day and per ad), ad_spend_compare and ad_spend_replace.',
       'meta-oauth action token: Add with a token — a system user’s token from the client’s Business Settings (for the BizDock app, ads_read), checked with Facebook (appsecret_proof) and saved the same way as a login (config.auth token); integration_id replaces the token of that connection.',
     ],
+    improved: [
+      'Tenant app: shared PromptBox / FormPromptTabs (src/integrations/PromptBox.tsx) for the Zoom, Callyzer, WATI and Facebook token side panels; watiPrompt in providers.ts (API Docs + webhook with the workspace’s wati-webhook URL).',
+    ],
   },
   {
     version: '0.14',
