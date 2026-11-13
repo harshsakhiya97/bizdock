@@ -5,9 +5,11 @@
 //
 //   POST { action: 'start', tenant_id, integration_id?, back }  (the app, logged in) → { url, state }
 //   GET  ?code=…&state=…  (Facebook sends the browser back here) → saved, then the popup goes to the app's /meta-connect page
+//   POST { action: 'token', tenant_id, token, integration_id? }  → Add with a token: a system user's token made in the
+//        client's Business Settings (for the BizDock app, ads_read); checked with Facebook, then saved the same way
 //
 // Secrets: META_APP_ID, META_APP_SECRET, META_CONFIG_ID. Tokens never reach the browser.
-import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
 const V = 'v25.0'
 const cors = {
@@ -28,6 +30,91 @@ async function proof(token: string, secret: string) {
 
 type Result = { ok?: boolean; message?: string; integration_id?: string | null; back?: string | null }
 
+type SaveIn = { tenantId: string; memberId: string | null; integrationId: string | null; token: string; tokenType: string; expiresIn: number; auth: 'oauth' | 'token' }
+/** a Facebook login (popup) or a pasted token → the connection, its token and its ad accounts; the first pull starts */
+async function saveConnection(admin: SupabaseClient, appSecret: string, o: SaveIn): Promise<{ error: string } | { label: string; accounts: number; integrationId: string }> {
+  const token = o.token
+  const p = await proof(token, appSecret)
+  const graph = async (path: string, params: Record<string, string> = {}) => {
+    const r = await fetch(`https://graph.facebook.com/${V}/${path}?${new URLSearchParams({ ...params, access_token: token, appsecret_proof: p })}`)
+    const d = await r.json().catch(() => ({}))
+    if (!r.ok || d.error) throw new Error(d.error?.message ?? `Facebook error ${r.status}`)
+    return d
+  }
+  const who = await graph('me', { fields: 'id,name' })
+  // the ad accounts the person allowed
+  const accounts: Record<string, unknown>[] = []
+  let page = await graph('me/adaccounts', { fields: 'id,account_id,name,currency,timezone_name,account_status,business{id,name}', limit: '200' })
+  for (let i = 0; i < 20; i++) {
+    accounts.push(...((page.data ?? []) as Record<string, unknown>[]))
+    const next = page.paging?.next as string | undefined
+    if (!next) break
+    const r = await fetch(next)
+    page = await r.json()
+  }
+  if (!accounts.length) return { error: o.auth === 'token' ? 'This token can’t see any ad account: assign the ad accounts to the system user (View performance) and try again.' : 'No ad accounts were shared. Try again and tick the ad accounts on Facebook’s screen.' }
+  const business = (accounts.find((a) => (a.business as { name?: string } | undefined)?.name)?.business as { id?: string; name?: string } | undefined) ?? {}
+  const label = business.name || String(who.name ?? 'Facebook')
+
+  // the same Facebook login already connected here (or the one being reconnected): renewed; else a new connection
+  const { data: rows } = await admin.from('integrations').select('id, config').eq('tenant_id', o.tenantId).eq('provider', 'facebook_ads')
+  const all = (rows ?? []) as { id: string; config: Record<string, string> }[]
+  const same = o.integrationId ? all.find((r) => r.id === o.integrationId) : all.find((r) => r.config?.fb_user_id === String(who.id))
+  const config = { auth: o.auth, fb_user_id: String(who.id), fb_name: String(who.name ?? ''), business_id: String(business.id ?? ''), business_name: String(business.name ?? '') }
+  let integrationId: string
+  if (same) {
+    const { error } = await admin.from('integrations').update({ label, config: { ...(same.config ?? {}), ...config }, status: 'connected', last_error: null, is_enabled: true }).eq('id', same.id)
+    if (error) return { error: error.message }
+    integrationId = same.id
+  } else {
+    const { data: ins, error } = await admin
+      .from('integrations')
+      .insert({ tenant_id: o.tenantId, provider: 'facebook_ads', label, config, status: 'connected', is_enabled: true, connected_by: o.memberId })
+      .select('id')
+      .single()
+    if (error) return { error: error.message }
+    integrationId = ins.id
+  }
+  const { error: tErr } = await admin.from('meta_tokens').upsert({
+    integration_id: integrationId,
+    access_token: token,
+    token_type: o.tokenType,
+    expires_at: o.expiresIn ? new Date(Date.now() + o.expiresIn * 1000).toISOString() : null,
+    updated_at: new Date().toISOString(),
+  })
+  if (tErr) return { error: tErr.message }
+
+  // history from the old ad-spend days (else the last 90 days)
+  const { data: first } = await admin.from('ad_spend').select('spend_date').eq('tenant_id', o.tenantId).order('spend_date').limit(1).maybeSingle()
+  const d90 = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10)
+  const from = first?.spend_date && first.spend_date < d90 ? first.spend_date : d90
+  for (const a of accounts) {
+    const actId = String(a.id)
+    const { data: had } = await admin.from('meta_ad_accounts').select('id').eq('tenant_id', o.tenantId).eq('act_id', actId).maybeSingle()
+    const base = {
+      integration_id: integrationId,
+      name: String(a.name ?? actId),
+      currency: String(a.currency ?? ''),
+      timezone: String(a.timezone_name ?? ''),
+      account_status: Number(a.account_status ?? 0) || null,
+      business_name: (a.business as { name?: string } | undefined)?.name ?? null,
+      last_error: null,
+    }
+    if (had) await admin.from('meta_ad_accounts').update(base).eq('id', had.id)
+    else await admin.from('meta_ad_accounts').insert({ ...base, tenant_id: o.tenantId, act_id: actId, backfill_from: from })
+  }
+
+  // the first pull, in the background
+  const { data: secret } = await admin.rpc('workflow_cron_secret')
+  fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/meta-ads`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-cron-secret': String(secret ?? '') },
+    body: JSON.stringify({ action: 'cron', tenant_id: o.tenantId }),
+  }).catch(() => {})
+  await new Promise((r) => setTimeout(r, 400))
+  return { label, accounts: accounts.length, integrationId }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
@@ -44,12 +131,31 @@ Deno.serve(async (req) => {
     })
     const { data: me } = await asCaller.auth.getUser()
     if (!me.user) return json({ error: 'Please log in again.' }, 401)
-    if (b.action !== 'start') return json({ error: 'Unknown action' }, 400)
+    if (b.action !== 'start' && b.action !== 'token') return json({ error: 'Unknown action' }, 400)
     const tenantId = String(b.tenant_id ?? '')
     const { data: may } = await asCaller.rpc('can_manage_integrations', { p_tenant: tenantId })
     if (!may) return json({ error: 'You need System Connections access to connect Facebook.' }, 403)
     const { data: t } = await admin.from('tenants').select('connections').eq('id', tenantId).maybeSingle()
     if (!(t?.connections as Record<string, { allowed?: boolean }> | null)?.facebook_ads?.allowed) return json({ error: 'Facebook Ads isn’t enabled for your workspace. Ask BizDock to turn it on.' }, 400)
+    if (b.action === 'token') {
+      const token = String(b.token ?? '').trim()
+      if (!token) return json({ error: 'Paste the access token.' }, 400)
+      let integrationId: string | null = null
+      if (b.integration_id) {
+        const { data: row } = await asCaller.from('integrations').select('id').eq('id', String(b.integration_id)).eq('tenant_id', tenantId).eq('provider', 'facebook_ads').maybeSingle()
+        if (!row) return json({ error: 'Connection not found.' }, 404)
+        integrationId = row.id
+      }
+      const { data: m } = await admin.from('tenant_members').select('id').eq('tenant_id', tenantId).eq('user_id', me.user.id).maybeSingle()
+      try {
+        const r = await saveConnection(admin, appSecret, { tenantId, memberId: m?.id ?? null, integrationId, token, tokenType: 'system_user', expiresIn: 0, auth: 'token' })
+        if ('error' in r) return json({ error: r.error }, 400)
+        return json({ ok: true, message: `${r.label} is connected with ${r.accounts} ad account${r.accounts === 1 ? '' : 's'}.` })
+      } catch (e) {
+        const msg = (e as Error).message
+        return json({ error: /appsecret_proof|app secret/i.test(msg) ? 'This token wasn’t made for the BizDock app: generate it for the BizDock app (system user → Generate token → app BizDock).' : `Facebook refused the token: ${msg}` }, 400)
+      }
+    }
     let integrationId: string | null = null
     if (b.integration_id) {
       const { data: row } = await asCaller.from('integrations').select('id').eq('id', String(b.integration_id)).eq('tenant_id', tenantId).eq('provider', 'facebook_ads').maybeSingle()
@@ -103,85 +209,10 @@ Deno.serve(async (req) => {
     const tok = await tr.json().catch(() => ({}))
     if (!tr.ok || !tok.access_token) return finish(false, `Facebook refused the login: ${tok.error?.message ?? tr.status}`)
     const token = String(tok.access_token)
-    const p = await proof(token, appSecret)
-    const graph = async (path: string, params: Record<string, string> = {}) => {
-      const r = await fetch(`https://graph.facebook.com/${V}/${path}?${new URLSearchParams({ ...params, access_token: token, appsecret_proof: p })}`)
-      const d = await r.json().catch(() => ({}))
-      if (!r.ok || d.error) throw new Error(d.error?.message ?? `Facebook error ${r.status}`)
-      return d
-    }
-    const who = await graph('me', { fields: 'id,name' })
-    // the ad accounts the person allowed
-    const accounts: Record<string, unknown>[] = []
-    let page = await graph('me/adaccounts', { fields: 'id,account_id,name,currency,timezone_name,account_status,business{id,name}', limit: '200' })
-    for (let i = 0; i < 20; i++) {
-      accounts.push(...((page.data ?? []) as Record<string, unknown>[]))
-      const next = page.paging?.next as string | undefined
-      if (!next) break
-      const r = await fetch(next)
-      page = await r.json()
-    }
-    if (!accounts.length) return finish(false, 'No ad accounts were shared. Try again and tick the ad accounts on Facebook’s screen.')
-    const business = (accounts.find((a) => (a.business as { name?: string } | undefined)?.name)?.business as { id?: string; name?: string } | undefined) ?? {}
-    const label = business.name || String(who.name ?? 'Facebook')
-
-    // the same Facebook login already connected here (or the one being reconnected): renewed; else a new connection
-    const { data: rows } = await admin.from('integrations').select('id, config').eq('tenant_id', st.tenant_id).eq('provider', 'facebook_ads')
-    const all = (rows ?? []) as { id: string; config: Record<string, string> }[]
-    const same = st.integration_id ? all.find((r) => r.id === st.integration_id) : all.find((r) => r.config?.fb_user_id === String(who.id))
-    const config = { auth: 'oauth', fb_user_id: String(who.id), fb_name: String(who.name ?? ''), business_id: String(business.id ?? ''), business_name: String(business.name ?? '') }
-    let integrationId: string
-    if (same) {
-      const { error } = await admin.from('integrations').update({ label, config: { ...(same.config ?? {}), ...config }, status: 'connected', last_error: null, is_enabled: true }).eq('id', same.id)
-      if (error) return finish(false, error.message)
-      integrationId = same.id
-    } else {
-      const { data: ins, error } = await admin
-        .from('integrations')
-        .insert({ tenant_id: st.tenant_id, provider: 'facebook_ads', label, config, status: 'connected', is_enabled: true, connected_by: st.member_id })
-        .select('id')
-        .single()
-      if (error) return finish(false, error.message)
-      integrationId = ins.id
-    }
-    const { error: tErr } = await admin.from('meta_tokens').upsert({
-      integration_id: integrationId,
-      access_token: token,
-      token_type: String(tok.token_type ?? ''),
-      expires_at: tok.expires_in ? new Date(Date.now() + Number(tok.expires_in) * 1000).toISOString() : null,
-      updated_at: new Date().toISOString(),
-    })
-    if (tErr) return finish(false, tErr.message)
-
-    // history from the old ad-spend days (else the last 90 days)
-    const { data: first } = await admin.from('ad_spend').select('spend_date').eq('tenant_id', st.tenant_id).order('spend_date').limit(1).maybeSingle()
-    const d90 = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10)
-    const from = first?.spend_date && first.spend_date < d90 ? first.spend_date : d90
-    for (const a of accounts) {
-      const actId = String(a.id)
-      const { data: had } = await admin.from('meta_ad_accounts').select('id').eq('tenant_id', st.tenant_id).eq('act_id', actId).maybeSingle()
-      const base = {
-        integration_id: integrationId,
-        name: String(a.name ?? actId),
-        currency: String(a.currency ?? ''),
-        timezone: String(a.timezone_name ?? ''),
-        account_status: Number(a.account_status ?? 0) || null,
-        business_name: (a.business as { name?: string } | undefined)?.name ?? null,
-        last_error: null,
-      }
-      if (had) await admin.from('meta_ad_accounts').update(base).eq('id', had.id)
-      else await admin.from('meta_ad_accounts').insert({ ...base, tenant_id: st.tenant_id, act_id: actId, backfill_from: from })
-    }
-
-    // the first pull, in the background
-    const { data: secret } = await admin.rpc('workflow_cron_secret')
-    fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/meta-ads`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-cron-secret': String(secret ?? '') },
-      body: JSON.stringify({ action: 'cron', tenant_id: st.tenant_id }),
-    }).catch(() => {})
-    await new Promise((r) => setTimeout(r, 400))
-    return finish(true, `${label} is connected with ${accounts.length} ad account${accounts.length === 1 ? '' : 's'}.`, integrationId)
+    const saved = await saveConnection(admin, appSecret, { tenantId: st.tenant_id, memberId: st.member_id, integrationId: st.integration_id, token, tokenType: String(tok.token_type ?? ''), expiresIn: Number(tok.expires_in ?? 0), auth: 'oauth' })
+    if ('error' in saved) return finish(false, saved.error)
+    const { label, accounts, integrationId } = saved
+    return finish(true, `${label} is connected with ${accounts} ad account${accounts === 1 ? '' : 's'}.`, integrationId)
   } catch (e) {
     return finish(false, (e as Error).message)
   }
