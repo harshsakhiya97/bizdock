@@ -13,6 +13,22 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.14',
+    date: '2026-11-13',
+    title: 'Callyzer, Paid Podcast import, calls by number',
+    summary: 'Callyzer call logs pulled into calls, the old Paid Podcast CRM imported, and calls / WhatsApp matched to leads by number.',
+    new: [
+      'calls (Callyzer / manual / import, call_method, recording, AI fields) and ad_spend tables; one-time import staging (import_tokens, import_rows, import_put) and private.pp_import_run for the old Paid Podcast CRM.',
+      'callyzer function (API v2.2): test / connect / sync from the app, cron every 5 minutes (callyzer-pull); synced_from / synced_to windows with a cursor, 1 request per 2 s, continues in a new run; callyzer_ingest keeps only calls to a lead’s number.',
+      'callyzer_logs (calls of the picked business by number), lead_call_counts (calls · connected per lead), lead_list_extras (Paid Podcast list: last comment, follow-ups done, connected calls, pending follow-up, latest meeting).',
+      'private.ph10 (a number’s last 10 digits) with indexes on leads and whatsapp_logs.',
+    ],
+    improved: [
+      'calls readable with Call logs / Settings, else only calls to a number that is a lead the person can see; whatsapp_logs readable on any lead with that number.',
+      'lead_list_extras checks access once per lead and counts in one pass (no statement timeout).',
+    ],
+  },
+  {
     version: '0.13',
     date: '2026-11-12',
     title: 'Connect with Zoom (OAuth)',
