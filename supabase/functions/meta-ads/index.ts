@@ -108,6 +108,42 @@ async function pullAccount(admin: SupabaseClient, a: Account, token: string, app
       }
       patch.structure_at = new Date().toISOString()
     }
+    // money: prepaid funds left, amount due, spent and the spending limit (one call; the funds line may need more access)
+    try {
+      const acct = async (fields: string) => {
+        const r = await fetch(`https://graph.facebook.com/${V}/${a.act_id}?${new URLSearchParams({ fields, access_token: token, appsecret_proof: p })}`)
+        const d = await r.json().catch(() => ({}))
+        if (!r.ok || d.error) throw new MetaError(d.error?.message ?? `Facebook error ${r.status}`, Number(d.error?.code ?? r.status))
+        return d as Record<string, unknown>
+      }
+      const basic = 'account_status,currency,balance,amount_spent,spend_cap,is_prepay_account'
+      let d: Record<string, unknown>
+      let fundsNote: string | null = null
+      try {
+        d = await acct(`${basic},funding_source_details`)
+      } catch (e) {
+        if (e instanceof MetaError && isLimit(e.code)) throw e
+        d = await acct(basic)
+        fundsNote = (e as Error).message
+      }
+      const fsd = (d.funding_source_details ?? null) as { display_string?: string; type?: number } | null
+      // "Available balance (₹1,234.56 INR)" → 1234.56
+      const m = fsd?.display_string?.replace(/,/g, '').match(/(\d+(?:\.\d+)?)/)
+      patch.funds = {
+        prepaid: !!d.is_prepay_account,
+        available: m ? Number(m[1]) : null,
+        funds_text: fsd?.display_string ?? null,
+        due: d.balance != null ? Number(d.balance) / 100 : null,
+        spent: d.amount_spent != null ? Number(d.amount_spent) / 100 : null,
+        cap: d.spend_cap != null && Number(d.spend_cap) > 0 ? Number(d.spend_cap) / 100 : null,
+        currency: d.currency ?? null,
+        note: fundsNote,
+      }
+      patch.funds_at = new Date().toISOString()
+      if (d.account_status != null) patch.account_status = Number(d.account_status)
+    } catch (e) {
+      if (e instanceof MetaError && (isAuth(e.code) || isLimit(e.code))) throw e
+    }
     // 2. history, 30 days per call
     let upto = a.synced_until
     const start = a.backfill_from ?? addDays(today, -90)
