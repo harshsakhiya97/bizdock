@@ -120,19 +120,28 @@ async function pullAccount(admin: SupabaseClient, a: Account, token: string, app
       let d: Record<string, unknown>
       let fundsNote: string | null = null
       try {
-        d = await acct(`${basic},funding_source_details`)
+        d = await acct(`${basic},funding_source_details,prepay_balance`)
       } catch (e) {
         if (e instanceof MetaError && isLimit(e.code)) throw e
-        d = await acct(basic)
-        fundsNote = (e as Error).message
+        try {
+          d = await acct(`${basic},funding_source_details`)
+        } catch {
+          d = await acct(basic)
+          fundsNote = (e as Error).message
+        }
       }
       const fsd = (d.funding_source_details ?? null) as { display_string?: string; type?: number } | null
-      // "Available balance (₹1,234.56 INR)" → 1234.56
-      const m = fsd?.display_string?.replace(/,/g, '').match(/(\d+(?:\.\d+)?)/)
+      // a funds line like "Available balance (₹1,234.56 INR)" → 1234.56; never a card ("Mastercard *5819")
+      const txt = fsd?.display_string ?? ''
+      const m = /(balance|funds|₹|INR)/i.test(txt) && !/\*\d{3,}/.test(txt) ? txt.replace(/,/g, '').match(/(\d+(?:\.\d+)?)/) : null
+      const pb = d.prepay_balance as { amount?: string | number; amount_in_hundredths?: string | number; currency?: string } | undefined
+      const pbAmount = pb?.amount_in_hundredths != null ? Number(pb.amount_in_hundredths) / 100 : pb?.amount != null ? Number(pb.amount) : null
       patch.funds = {
         prepaid: !!d.is_prepay_account,
-        available: m ? Number(m[1]) : null,
+        available: pbAmount != null && !Number.isNaN(pbAmount) ? pbAmount : m ? Number(m[1]) : null,
         funds_text: fsd?.display_string ?? null,
+        source_type: fsd?.type ?? null,
+        raw: { funding: fsd, prepay_balance: pb ?? null },
         due: d.balance != null ? Number(d.balance) / 100 : null,
         spent: d.amount_spent != null ? Number(d.amount_spent) / 100 : null,
         cap: d.spend_cap != null && Number(d.spend_cap) > 0 ? Number(d.spend_cap) / 100 : null,
