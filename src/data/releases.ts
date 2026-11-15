@@ -13,6 +13,18 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.16',
+    date: '2026-11-15',
+    title: 'Lead category, form steps, meeting outcomes, funnel flow',
+    summary: 'Migration 20261115100000_category_meetings and 20261114120000_funnel_flow; edge function meta-preview.',
+    new: [
+      'leads.temperature is the category: new / hot / warm / cold / not_interested / closed (default new). Triggers: leads_category_from_stage (won → closed, lost → not_interested), follow_ups_not_interested (a done follow-up whose outcome name says not interested), lead_submissions_vsl (an update-lead submission sets extra.vsl_form_at). Existing leads backfilled.',
+      'meetings.status is scheduled (Upcoming) / done / no_show; meeting_drop_lead removed; old statuses mapped (qualified / not_qualified → done with the note prefixed, cancelled → no_show, past scheduled → done) with the Zoom trigger off.',
+      'funnel_flow(p_funnel, p_from, p_to): impressions → link clicks → landing page views → leads (ads vs organic by linked campaign names) → stages reached (current stage or lead_activities) → revenue.',
+      'meta-preview edge function: an ad’s preview frame from Facebook (/{ad_id}/previews), read only, token kept server side.',
+    ],
+  },
+  {
     version: '0.15',
     date: '2026-11-13',
     title: 'Facebook Ads (Meta Marketing API)',
