@@ -45,6 +45,8 @@ Deno.serve(async (req) => {
   await admin.from('whatsapp_hooks').update({ last_event_at: new Date().toISOString() }).eq('tenant_id', tenant)
 
   const event = String(b.eventType ?? b.event ?? '').trim()
+  // what WATI sent (kept in the function logs, to see its fields)
+  console.log('wati event', event, JSON.stringify(b).slice(0, 1500))
   const phone = waNumber(b.waId ?? b.whatsappNumber ?? b.phone ?? b.from)
   const ids = [b.id, b.whatsappMessageId, b.localMessageId, b.messageId].map((x) => String(x ?? '').trim()).filter(Boolean)
   const at = when(b.timestamp ?? b.created)
