@@ -13,6 +13,22 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.17',
+    date: '2026-11-16',
+    title: 'Default / Brand Deals types, orders and order invoices',
+    summary: 'Migrations 20261115140000_default_type, 20261116100000_orders, 20261116120000_brand_deals_type, 20261116130000_orders_customer_on_add, 20261116160000_order_invoices.',
+    new: [
+      'Business types DEFAULT and BRAND-DEALS (seeded for every workspace; private.is_default_biz covers both): bookings without a time (bookings_check is now end_time >= start_time), no slot overlap check.',
+      'Orders: bookings.order_no (ORD-0001 per business, private.order_counters, trigger bookings_order) and order_status (not_started / active / completed / cancelled; cancelled → status cancelled, else confirmed).',
+      'booking_after_save: for DEFAULT / BRAND-DEALS any order not cancelled makes the lead a customer and Closed, paid or not; existing orders re-run.',
+      'Tables invoices and invoice_payments (RLS via private.can_see_invoice) and bookings.invoice_id. Order invoices: invoice_create(orders, company, gst, rate, parts), invoice_add_orders, invoice_remove_order; private.check_orders (one client: customer, else lead, else name + phone; one business); private.next_invoice_no (same series as bookings).',
+      'Triggers: bookings_a_invoice_link (GST from the invoice; orders carry no invoice number; amount locked once the invoice is fully paid), bookings_invoice_recalc → private.invoice_recalc (totals from the orders, paid can’t exceed the total, the change goes to the last unpaid part or a new Balance part), invoice_payments_sync (paid) and private.invoice_allocate (paid spread over the orders, oldest first), invoices_gst (GST to the orders).',
+    ],
+    improved: [
+      'assign_booking_invoice / booking_invoice skip DEFAULT / BRAND-DEALS orders (their invoice is generated from the Orders list). Existing invoiced test orders became one-order invoices, their parts moved to invoice_payments.',
+    ],
+  },
+  {
     version: '0.16',
     date: '2026-11-15',
     title: 'Lead category, form steps, meeting outcomes, funnel flow',
