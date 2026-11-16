@@ -464,12 +464,9 @@ async function matches(admin: SupabaseClient, leadId: string, raw: Cond | undefi
       const { count } = await admin.from('meetings').select('id', { count: 'exact', head: true }).eq('lead_id', leadId).neq('status', 'cancelled')
       has = (count ?? 0) > 0
     } else {
-      const { data: bk } = await admin.from('bookings').select('id').eq('lead_id', leadId).neq('status', 'cancelled')
-      const ids = (bk ?? []).map((b) => b.id as string)
-      if (ids.length) {
-        const { count } = await admin.from('booking_payments').select('id', { count: 'exact', head: true }).in('booking_id', ids).eq('status', 'paid')
-        has = (count ?? 0) > 0
-      }
+      // payments are on invoices now; each booking's paid amount comes from its invoice
+      const { count: paid } = await admin.from('bookings').select('id', { count: 'exact', head: true }).eq('lead_id', leadId).neq('status', 'cancelled').gt('paid_amount', 0)
+      has = (paid ?? 0) > 0
       if (!has) {
         const { count } = await admin.from('lead_submissions').select('id', { count: 'exact', head: true }).eq('lead_id', leadId).eq('result', 'payment')
         has = (count ?? 0) > 0
