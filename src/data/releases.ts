@@ -13,6 +13,21 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.18',
+    date: '2026-11-16',
+    title: 'Company Master and invoice kinds',
+    summary: 'Migration 20261116190000_company_master_invoices; workflow-runner reads payments from bookings.paid_amount.',
+    new: [
+      'billing_companies: email, state_code, cin, pan, bank_holder / bank_name / bank_account / bank_branch / bank_ifsc, number_format ({N}, {NNNN}, {FY}, {PREFIX}) and next_no; private.company_next_no / next_invoice_no.',
+      'businesses / sub_businesses.company_id and nongst_company_id; products.gst_name, hsn_code; leads.bill_company / bill_address / bill_state / bill_state_code / bill_gstin.',
+      'invoices.kind (gst / nongst), seller and buyer (jsonb copies); invoice_create(orders, kind, company, rate, buyer, parts) saves the buyer on the lead; invoice_set_buyer.',
+    ],
+    improved: [
+      'Every booking is invoiced from its list: booking_invoice_link sets GST from the invoice (else none) and no invoice number on bookings; bookings_invoice_on_insert dropped; booking_invoice raises. check_orders takes any booking. The 32 booking invoices moved to invoices / invoice_payments (paid 5,97,720 kept).',
+      'invoice_recalc skips the paid check and the part change while moving old invoices (bizdock.no_adjust).',
+    ],
+  },
+  {
     version: '0.17',
     date: '2026-11-16',
     title: 'Default / Brand Deals types, orders and order invoices',
