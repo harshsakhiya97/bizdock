@@ -21,6 +21,10 @@ export const releases: Release[] = [
       'billing_companies: email, state_code, cin, pan, bank_holder / bank_name / bank_account / bank_branch / bank_ifsc, number_format ({N}, {NNNN}, {FY}, {PREFIX}) and next_no; private.company_next_no / next_invoice_no.',
       'businesses / sub_businesses.company_id and nongst_company_id; products.gst_name, hsn_code; leads.bill_company / bill_address / bill_state / bill_state_code / bill_gstin.',
       'invoices.kind (gst / nongst), seller and buyer (jsonb copies); invoice_create(orders, kind, company, rate, buyer, parts) saves the buyer on the lead; invoice_set_buyer.',
+      'Migration 20261116200000_whatsapp_campaigns: wa_campaigns, wa_campaign_recipients (RLS whatsapp.campaign), whatsapp_logs.campaign_id and source \'campaign\'; RPCs wa_campaign_create / cancel / people / stats, wa_campaign_claim (service role); private.can_see_wa + policy for the whatsapp scope; public.wa_can (list / send / manage) used by whatsapp-templates; cron wa-campaigns every minute → private.kick_wa_campaigns.',
+      'wa-campaign edge function: sends due campaigns ~1/s (50 s a call, 90 s lock), logs to whatsapp_logs and lead_messages; action backfill (x-cron-secret) fills past sends\' status from WATI getMessages (same number and template within 3 min).',
+      'whatsapp-templates: permissions by wa_can, provider keys read with the service role.',
+      'wati-webhook + migration 20261116210000_whatsapp_logs_wati_ids: whatsapp_logs.wati_ids keeps WATI\'s id, wamid and local id; status events (no number) match on them, else the number decoded from the wamid and that number\'s latest send without ids.',
     ],
     improved: [
       'Every booking is invoiced from its list: booking_invoice_link sets GST from the invoice (else none) and no invoice number on bookings; bookings_invoice_on_insert dropped; booking_invoice raises. check_orders takes any booking. The 32 booking invoices moved to invoices / invoice_payments (paid 5,97,720 kept).',
