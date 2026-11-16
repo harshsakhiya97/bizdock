@@ -5,8 +5,9 @@
 //   POST { tenant_id, action: 'delete', waba_id, name, language }  → { ok }
 //   POST { tenant_id, action: 'send', phone, template, params, body?, lead_id? }  → { ok }  (WhatsApp logs → Chats; kept in the logs)
 //
-// The provider keys are read with the CALLER's token, so row security decides: only people with
-// "Settings & integrations" can read the integrations row. The keys never reach the browser.
+// Who may do what is checked with the CALLER's token (public.wa_can): list = any member of the workspace,
+// send = WhatsApp chats / campaigns or System Connections, create / delete = WhatsApp templates or System Connections.
+// The provider keys are then read on the server and never reach the browser.
 // Providers: WATI for now (Dovesoft / AiSensy / Meta answer "not supported yet").
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -38,7 +39,12 @@ Deno.serve(async (req) => {
   const tenantId = String(body.tenant_id ?? '')
   if (!tenantId) return fail('Missing workspace')
 
-  const { data: row } = await asCaller
+  const what = body.action === 'list' ? 'list' : body.action === 'send' ? 'send' : 'manage'
+  const { data: allowed } = await asCaller.rpc('wa_can', { p_tenant: tenantId, p_what: what })
+  if (!allowed) return fail(what === 'send' ? 'Your role can’t send WhatsApp messages.' : 'Your role can’t change WhatsApp templates.', 403)
+
+  const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
+  const { data: row } = await admin
     .from('integrations')
     .select('config, is_enabled')
     .eq('tenant_id', tenantId)
@@ -136,7 +142,6 @@ Deno.serve(async (req) => {
         const template = String(body.template ?? '').trim()
         if (!template) return fail('Pick a template.')
         const params = Object.entries((body.params ?? {}) as Record<string, unknown>).map(([name, value]) => ({ name, value: String(value ?? '').trim() || '-' }))
-        const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
         const { data: member } = await admin.from('tenant_members').select('id').eq('tenant_id', tenantId).eq('user_id', me.user.id).maybeSingle()
         const leadId = typeof body.lead_id === 'string' && body.lead_id ? body.lead_id : null
         const text = String(body.body ?? '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (m, k) => params.find((x) => x.name === k)?.value ?? m)
