@@ -242,8 +242,10 @@ async function syncMeeting(admin: SupabaseClient, id: string) {
   const a = await loadAccount(admin, m.zoom_account_id)
   if (!a) return { skipped: true }
   const who = [m.lead?.first_name, m.lead?.last_name].filter(Boolean).join(' ') || 'guest'
+  // a team (internal) meeting: its title
+  const topic = m.kind === 'team' ? String(m.title || 'Team meeting') : `Meeting with ${who}`
   try {
-    const z = await upsertZoom(a, 'meeting', m.zoom_meeting_id, `Meeting with ${who}`, m.meeting_date, m.start_time, m.end_time)
+    const z = await upsertZoom(a, 'meeting', m.zoom_meeting_id, topic, m.meeting_date, m.start_time, m.end_time)
     await admin
       .from('meetings')
       .update({ zoom_meeting_id: z.id, link: z.join_url || m.link, zoom_start_url: z.start_url, zoom_password: z.password, zoom_error: null, zoom_pull_count: 0, zoom_pulled_at: null })
@@ -349,7 +351,8 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
   // leads to match: the meeting's lead, or leads of the event's business, by email
   const emails = [...people.values()].map((p) => p.email).filter(Boolean)
   const leadByEmail = new Map<string, string>()
-  if (emails.length) {
+  // a team (internal) meeting has no leads to match
+  if (emails.length && !(kind === 'meeting' && row.kind === 'team')) {
     let q = admin.from('leads').select('id, email').eq('tenant_id', row.tenant_id).in('email', emails)
     if (row.business_id) q = q.eq('business_id', row.business_id)
     const { data: ls } = await q
@@ -364,7 +367,7 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
     }
   }
   let meetingLead: { id: string; email: string; first: string } | null = null
-  if (kind === 'meeting') {
+  if (kind === 'meeting' && row.lead_id) {
     const { data: l } = await admin.from('leads').select('id, email, first_name').eq('id', row.lead_id).maybeSingle()
     if (l) meetingLead = { id: l.id, email: norm(l.email), first: norm(l.first_name) }
   }
