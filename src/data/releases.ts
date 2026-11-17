@@ -13,6 +13,20 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.20',
+    date: '2026-11-17',
+    title: 'Callyzer team calls, call recordings storage, booking delete',
+    summary: 'Migrations 20261117160000_booking_delete, 20261117170000_callyzer_team_calls, 20261117180000_callyzer_team_calls_of, 20261117190000_call_recordings_storage; edge function recording-copy.',
+    new: [
+      'callyzer_team_calls (every Callyzer call, filled by callyzer_ingest), callyzer_team_report, callyzer_team_calls_of; 90-day re-pull.',
+      'Bucket call-recordings (private, read by call_logs / settings), recording_path on callyzer_team_calls and calls, recording-copy edge function (cron every minute, 5 parallel, 5 tries); callyzer_logs returns recording_path.',
+      'booking_delete RPC (bookings.delete permission): deletes its sole invoice, or takes it off a shared one first.',
+    ],
+    fixed: [
+      'InvoicePanel: the drawer key bumps only after a change (no remount on the first load).',
+    ],
+  },
+  {
     version: '0.19',
     date: '2026-11-17',
     title: 'Funnel graphs, unified leads table',
