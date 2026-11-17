@@ -13,6 +13,22 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.19',
+    date: '2026-11-17',
+    title: 'Funnel graphs, unified leads table',
+    summary: 'Migration 20261117130000_lead_list_extras_all: lead_list_extras takes p_sub null (every lead the caller sees).',
+    new: [
+      'FunnelDaySpend: Graph / List view; FunnelPage leads tab: category filter, DateRangePicker (last30), Graph (SpendLines unit count: all + per category) / List.',
+      'FunnelLeadsTable: the Leads page\'s LeadCells (exported) for the funnel\'s business type, with CompleteModal, MeetingDrawer and StageMoveModal.',
+    ],
+    improved: [
+      'LeadsPage: one column set for every business (LeadCells, kind pp / studio / default); extras loaded for any business; Calls column folded into Follow-ups done.',
+      'BusinessProvider.switches counter; AppLayout redirects on a top-bar switch (hidden page → /dashboard, detail → its list).',
+      'SpendLines: drawn at the box\'s measured width (ResizeObserver); count axis rounds to a multiple of 4.',
+      'Enquiry / Inquiries copy → Lead(s); funnel template first stage \'Lead\'. OrdersPage: date and time on two lines. SubBusinessCards: top source removed.',
+    ],
+  },
+  {
     version: '0.18',
     date: '2026-11-16',
     title: 'Company Master and invoice kinds',
