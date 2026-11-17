@@ -15,15 +15,25 @@ export const releases: Release[] = [
   {
     version: '0.20',
     date: '2026-11-17',
-    title: 'Callyzer team calls, call recordings storage, booking delete',
-    summary: 'Migrations 20261117160000_booking_delete, 20261117170000_callyzer_team_calls, 20261117180000_callyzer_team_calls_of, 20261117190000_call_recordings_storage; edge function recording-copy.',
+    title: 'Callyzer team calls, call recordings storage, booking delete, deal steps, team meetings',
+    summary: 'Migrations 20261117160000_booking_delete, 20261117170000_callyzer_team_calls, 20261117180000_callyzer_team_calls_of, 20261117190000_call_recordings_storage, 20261117200000_deal_steps, 20261117210000_deal_steps_master, 20261117220000_lead_delete_bookings, 20261117230000_meetings_team, 20261117240000_follow_up_server_time; edge functions recording-copy (new) and zoom (v20).',
     new: [
       'callyzer_team_calls (every Callyzer call, filled by callyzer_ingest), callyzer_team_report, callyzer_team_calls_of; 90-day re-pull.',
       'Bucket call-recordings (private, read by call_logs / settings), recording_path on callyzer_team_calls and calls, recording-copy edge function (cron every minute, 5 parallel, 5 tries); callyzer_logs returns recording_path.',
       'booking_delete RPC (bookings.delete permission): deletes its sole invoice, or takes it off a shared one first.',
+      'bookings.deal_steps jsonb [{step_id, at, by}]; deal_steps master table (RLS: members read, masters.edit write), seeded with the English steps for every tenant.',
+      'meetings: kind lead | team, title, members uuid[] (gin index; meeting_members_sync keeps assigned_to = members[1]), lead_id / business_id nullable (meetings_kind_fields check), status cancelled.',
+      'meeting_busy RPC: members busy at a date and time (scheduled meetings and booking-calendar slots); member_busy uses members[].',
+    ],
+    improved: [
+      'meetings RLS: read / update for its members and creator, or the Meetings view / edit permission for lead meetings; any member can insert; delete by the creator or meetings.delete.',
+      'leads_delete_bookings BEFORE DELETE trigger: a lead\'s bookings go with it (sole invoices deleted, shared ones detached with bizdock.no_adjust).',
+      'zoom: a team meeting\'s Zoom topic is its title; no lead matching for team meeting attendance.',
+      'follow_ups_server_time trigger: completed_at (and due_at of a logged call) = now() for app users.',
     ],
     fixed: [
       'InvoicePanel: the drawer key bumps only after a change (no remount on the first load).',
+      'Alka\'s 51 logged calls and 1 scheduled follow-up (computer 13 h 30 min ahead) moved back 13 h 30 min.',
     ],
   },
   {
