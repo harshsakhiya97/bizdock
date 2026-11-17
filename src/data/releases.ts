@@ -26,6 +26,7 @@ export const releases: Release[] = [
       'BusinessProvider.switches counter; AppLayout redirects on a top-bar switch (hidden page → /dashboard, detail → its list).',
       'SpendLines: drawn at the box\'s measured width (ResizeObserver); count axis rounds to a multiple of 4.',
       'Enquiry / Inquiries copy → Lead(s); funnel template first stage \'Lead\'. OrdersPage: date and time on two lines. SubBusinessCards: top source removed.',
+      'LeadsPage: NO_FUNNEL_LOST stands in for a Lost stage on leads without a funnel (lost_reason_id + temperature not_interested + note activity). QuickAddLead: Business select only under All businesses.',
     ],
   },
   {
