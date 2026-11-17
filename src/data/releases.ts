@@ -29,6 +29,9 @@ export const releases: Release[] = [
     improved: [
       'Every booking is invoiced from its list: booking_invoice_link sets GST from the invoice (else none) and no invoice number on bookings; bookings_invoice_on_insert dropped; booking_invoice raises. check_orders takes any booking. The 32 booking invoices moved to invoices / invoice_payments (paid 5,97,720 kept).',
       'invoice_recalc skips the paid check and the part change while moving old invoices (bizdock.no_adjust).',
+      'BusinessProvider: a selected business with one visible sub-business resolves to that sub-business; BusinessSwitcher shows one “Business · Sub” option for it and no switcher when a member has a single place.',
+      'Stat cards computed from the filtered rows (OrdersPage, CustomersPage, MeetingsPage, BookingCalendarPage, CampaignsPage).',
+      'WaBubble wrapper renamed .wa-tpl-msg (full width; .wa-msg is the chat bubble); .wa-chats height calc(100vh - 170px); template cards cap the preview at 220px with a fade.',
     ],
   },
   {
