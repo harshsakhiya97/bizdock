@@ -13,6 +13,19 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.22',
+    date: '2026-11-18',
+    title: 'Funnel list view, call category, New → Hot, Customers = Closed leads',
+    summary: 'Migration 20261118180000_lead_new_to_hot.',
+    new: [
+      'private.lead_hot_on_contact(): after a follow-up is done (insert / update of status) or a meeting is added, a lead in New becomes Hot (with a lead activity); existing New leads with a done follow-up or a meeting were updated.',
+    ],
+    improved: [
+      'booking_after_save no longer sets temperature = closed for Default / Brand Deals orders (a booking still moves the lead to the Won stage).',
+      'Tenant app: Customers page = leads with temperature closed; FunnelAdsReport list view (meetings per lead: Booking / Showup); follow-up forms set the category and clear pending follow-ups for Not interested / Closed.',
+    ],
+  },
+  {
     version: '0.21',
     date: '2026-11-18',
     title: 'Switch Else path, meeting agenda, invoice regenerate on print, Support in team',
