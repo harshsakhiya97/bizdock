@@ -329,7 +329,7 @@ export function GitGraphPage() {
   )
 }
 
-/** the branch flow: developers' dev_* branches → merged into Pride (deploy/pride) → main (auto copy) → new clients' deploy branches */
+/** the branch flow, top down: new clients ← main ← (auto copy) Pride ← (merge) each developer's dev_* branch */
 function BranchTree({ g, color }: { g: Graph; color: (name: string) => string }) {
   const byName = new Map(g.branches.map((b) => [b.name, b]))
   const roots = g.branches.filter((b) => b.name.startsWith('deploy/'))
@@ -366,32 +366,32 @@ function BranchTree({ g, color }: { g: Graph; color: (name: string) => string })
   const [pride, ...clients] = roots
   return (
     <div className="gt">
-      {devs.length > 0 && (
-        <>
-          <div className="gt-kids gt-up">
-            {devs.map((d) => (
-              <div key={d.name} className="gt-kid">
-                {node(d, pride.name)}
-              </div>
-            ))}
-          </div>
-          <div className="gt-link"><span>merge</span></div>
-        </>
-      )}
-      {node(pride, undefined, 'deployed from here')}
-      {main && (
-        <>
-          <div className="gt-link"><span>auto copy</span></div>
-          {node(main, pride.name, 'copy of what’s live')}
-        </>
-      )}
       {clients.length > 0 && (
         <>
-          <div className="gt-link"><span>new client: a copy of main</span></div>
-          <div className="gt-kids">
+          <div className="gt-kids gt-up">
             {clients.map((c) => (
               <div key={c.name} className="gt-kid">
                 {node(c, 'main', 'deployed from here')}
+              </div>
+            ))}
+          </div>
+          <div className="gt-link"><span>new client: a copy of main</span></div>
+        </>
+      )}
+      {main && (
+        <>
+          {node(main, pride.name, 'copy of what’s live')}
+          <div className="gt-link"><span>auto copy</span></div>
+        </>
+      )}
+      {node(pride, undefined, 'deployed from here')}
+      {devs.length > 0 && (
+        <>
+          <div className="gt-link gt-stub"><span>merge</span></div>
+          <div className="gt-kids">
+            {devs.map((d) => (
+              <div key={d.name} className="gt-kid">
+                {node(d, pride.name)}
               </div>
             ))}
           </div>
