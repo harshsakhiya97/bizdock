@@ -164,7 +164,6 @@ export function GitGraphPage() {
     })
     return out
   }, [g, L])
-  const branches = useMemo(() => [...(g?.branches ?? [])].sort((a, b) => String(b.date ?? '').localeCompare(String(a.date ?? ''))), [g])
   const width = PAD * 2 + Math.max(1, L?.lanes.length ?? 1) * LANE
 
   return (
@@ -198,40 +197,6 @@ export function GitGraphPage() {
         <>
           <h3 className="gg-h">Branch tree</h3>
           <BranchTree g={g} color={branchColor} />
-
-          <h3 className="gg-h">Currently working on</h3>
-          <div className="gg-cards">
-            {branches.map((b) => {
-              const cmp = g.compare[b.name] ?? {}
-              const recent = b.date && Date.now() - Date.parse(b.date) < 30 * 86_400_000
-              return (
-                <div key={b.name} className={cn('card gg-card', !recent && 'is-old', b.name === CURRENT && 'is-current')} style={{ borderTopColor: branchColor(b.name) }}>
-                  <div className="gg-branch">
-                    <GitBranch size={15} style={{ color: branchColor(b.name) }} /> <b>{b.name}</b>
-                    {b.name === CURRENT && (
-                      <span className="gg-current" title="This app is running from this branch">
-                        Current
-                      </span>
-                    )}
-                  </div>
-                  <div className="gg-who">
-                    {b.avatar && <img src={b.avatar} alt="" />}
-                    <span>{b.login ?? b.name_author ?? '—'}</span>
-                  </div>
-                  <div className="muted small">
-                    Last commit {ago(b.date)} · {when(b.date)}
-                  </div>
-                  <div className="gg-cmp">
-                    {Object.entries(cmp).map(([base, v]) => (
-                      <span key={base} className="badge badge-muted" title={`${v.ahead} commits not in ${base}; ${v.behind} commits of ${base} not here`}>
-                        vs {base}: ↑{v.ahead} ↓{v.behind}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
 
           <h3 className="gg-h">
             Commits <span className="muted small">({g.commits.length} since {new Date(g.since).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})</span>
