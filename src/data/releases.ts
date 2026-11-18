@@ -26,6 +26,8 @@ export const releases: Release[] = [
       'meeting_busy RPC: members busy at a date and time (scheduled meetings and booking-calendar slots); member_busy uses members[].',
     ],
     improved: [
+      'Git graph: edge function github (GITHUB_TOKEN secret, read-only; branches, 30 days of commits, tags, compare with deploy/pride and main, a commit\'s files; 1-minute cache), public.can_see_dev() (platform owner, or owner / support of a workspace); What\'s new → Git graph in both apps.',
+      'GIT-FLOW.md: dev_harsh / dev_shyam → deploy/pride → deploy; main a copy of what\'s live.',
       'meetings RLS: read / update for its members and creator, or the Meetings view / edit permission for lead meetings; any member can insert; delete by the creator or meetings.delete.',
       'leads_delete_bookings BEFORE DELETE trigger: a lead\'s bookings go with it (sole invoices deleted, shared ones detached with bizdock.no_adjust).',
       'zoom: a team meeting\'s Zoom topic is its title; no lead matching for team meeting attendance.',
