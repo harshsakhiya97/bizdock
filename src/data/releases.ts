@@ -16,12 +16,15 @@ export const releases: Release[] = [
     version: '0.23',
     date: '2026-11-18',
     title: 'Razorpay connection and payments',
-    summary: 'Migrations 20261118200000_razorpay_payments, 20261118210000_integrations_razorpay, 20261118220000_funnel_payment_amount, 20261118230000_funnel_payment_descriptions. Edge function razorpay.',
+    summary: 'Migrations 20261118200000_razorpay_payments, 20261118210000_integrations_razorpay, 20261118220000_funnel_payment_amount, 20261118230000_funnel_payment_descriptions. Edge functions razorpay, callyzer.',
     new: [
       'razorpay_payments (amount in ₹, status, method, payer phone / email, notes, refunds…), unique per tenant + payment id; read with Payments → view. private.razorpay_match_lead() matches a lead by phone (last 10 digits), else email.',
       'Edge function razorpay: test (on save), sync (Sync now, can_see_payments) and cron — pg_cron razorpay-sync every 5 minutes (private.kick_razorpay) while a Razorpay connection is on; first sync 90 days, then from the last sync (7 days back again).',
       'integrations: provider razorpay allowed; Tenants → Other connections: Razorpay.',
       'funnels.payment_descriptions (the funnel’s Razorpay products); funnels.payment_amount added first, no longer used.',
+    ],
+    fixed: [
+      'Edge function callyzer: a 401 / 403 from Callyzer (seen around 7 AM with a good key) no longer sets status error at once — it records config.refused_since, keeps pulling every 5 minutes, and sets error only after an hour of refusals; a good pull clears it.',
     ],
   },
   {
