@@ -33,6 +33,9 @@ const call = async <T,>(body: Record<string, unknown>): Promise<T> => {
   return data as T
 }
 
+/** the branch this app is running from: marked Current */
+const CURRENT = typeof __GIT_BRANCH__ === 'string' ? __GIT_BRANCH__ : ''
+
 const COLORS = ['#2563eb', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#dc2626', '#65a30d', '#9333ea', '#0d9488']
 const ROW = 52
 const LANE = 18
@@ -199,9 +202,14 @@ export function GitGraphPage() {
               const cmp = g.compare[b.name] ?? {}
               const recent = b.date && Date.now() - Date.parse(b.date) < 30 * 86_400_000
               return (
-                <div key={b.name} className={cn('card gg-card', !recent && 'is-old')} style={{ borderTopColor: branchColor(b.name) }}>
+                <div key={b.name} className={cn('card gg-card', !recent && 'is-old', b.name === CURRENT && 'is-current')} style={{ borderTopColor: branchColor(b.name) }}>
                   <div className="gg-branch">
                     <GitBranch size={15} style={{ color: branchColor(b.name) }} /> <b>{b.name}</b>
+                    {b.name === CURRENT && (
+                      <span className="gg-current" title="This app is running from this branch">
+                        Current
+                      </span>
+                    )}
                   </div>
                   <div className="gg-who">
                     {b.avatar && <img src={b.avatar} alt="" />}
@@ -266,6 +274,7 @@ export function GitGraphPage() {
                         {(tipsOf.get(c.sha) ?? []).map((b) => (
                           <span key={b} className="gg-ref" style={{ ['--c' as string]: branchColor(b) }}>
                             <GitBranch size={11} /> {b}
+                            {b === CURRENT && ' · current'}
                           </span>
                         ))}
                         {(tagsOf.get(c.sha) ?? []).map((t) => (
