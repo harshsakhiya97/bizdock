@@ -363,7 +363,10 @@ async function advance(admin: SupabaseClient, run: Run) {
     } else if (n.type === 'condition' || n.type === 'switch') {
       // Switch: the first path whose condition the lead matches (checked top to bottom); Yes / No: yes or no.
       // A path with no line, or no path matching, ends the workflow here.
-      const cases = n.type === 'switch' ? ((d.cases ?? []) as (Cond & { id: string; label?: string })[]) : [{ ...(d as unknown as Cond), id: 'yes', label: 'Yes' }]
+      const all = n.type === 'switch' ? ((d.cases ?? []) as (Cond & { id: string; label?: string; else?: boolean })[]) : [{ ...(d as unknown as Cond), id: 'yes', label: 'Yes' }]
+      // the Else path (leads matching none of the others) has no condition and is taken last
+      const cases = all.filter((c) => !('else' in c && c.else))
+      const other = all.find((c) => 'else' in c && c.else)
       let hit: { id: string; label: string } | null = null
       for (const [ci, c] of cases.entries()) {
         // a run value (webhook field / earlier step) is checked as it is; anything else on the lead
@@ -374,9 +377,10 @@ async function advance(admin: SupabaseClient, run: Run) {
         }
       }
       if (!hit && n.type === 'condition') hit = { id: 'no', label: 'No' }
+      if (!hit && other) hit = { id: other.id, label: String(other.label ?? '').trim() || 'Else' }
       const edge = hit ? edges.find((e) => e.source === n.id && e.sourceHandle === hit!.id) : null
       if (!hit || !edge) {
-        note(n, 'ok', !run.lead_id && !cases.some((c) => c.field?.startsWith('v:')) ? 'No lead to check: the workflow ends here.' : hit ? `Went down “${hit.label}”; it has no next step, so the workflow ends here.` : 'The lead matched no path: the workflow ends here.')
+        note(n, 'ok', !run.lead_id && !cases.some((c) => c.field?.startsWith('v:')) && !other ? 'No lead to check: the workflow ends here.' : hit ? `Went down “${hit.label}”; it has no next step, so the workflow ends here.` : 'The lead matched no path: the workflow ends here.')
         return save({ status: 'done', node_id: n.id, error: null })
       }
       note(n, 'ok', `Went down “${hit.label}”`)
