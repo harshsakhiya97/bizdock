@@ -329,7 +329,7 @@ export function GitGraphPage() {
   )
 }
 
-/** who deploys from what: each deploy/<client> branch, with the developers' dev_* branches under it, and main beside it */
+/** the branch flow: developers' dev_* branches → merged into Pride (deploy/pride) → main (auto copy) → new clients' deploy branches */
 function BranchTree({ g, color }: { g: Graph; color: (name: string) => string }) {
   const byName = new Map(g.branches.map((b) => [b.name, b]))
   const roots = g.branches.filter((b) => b.name.startsWith('deploy/'))
@@ -361,32 +361,46 @@ function BranchTree({ g, color }: { g: Graph; color: (name: string) => string })
     )
   }
   if (!roots.length) return <div className="muted small">No deploy/ branch yet.</div>
+  // the flow: each developer's branch → merged into the first client's deploy branch (Pride) → main copies it →
+  // a new client's deploy branch is made from main
+  const [pride, ...clients] = roots
   return (
     <div className="gt">
-      {roots.map((r) => (
-        <div key={r.name} className="gt-tree">
-          <div className="gt-top">
-            {node(r, undefined, 'deployed from here')}
-            {main && <div className="gt-side">{node(main, r.name, 'copy of what’s live')}</div>}
-          </div>
-          {devs.length > 0 && (
-            <>
-              <div className="gt-stem" />
-              <div className="gt-kids">
-                {devs.map((d) => (
-                  <div key={d.name} className="gt-kid">
-                    {node(d, r.name)}
-                  </div>
-                ))}
+      {devs.length > 0 && (
+        <>
+          <div className="gt-kids gt-up">
+            {devs.map((d) => (
+              <div key={d.name} className="gt-kid">
+                {node(d, pride.name)}
               </div>
-            </>
-          )}
-        </div>
-      ))}
+            ))}
+          </div>
+          <div className="gt-link"><span>merge</span></div>
+        </>
+      )}
+      {node(pride, undefined, 'deployed from here')}
+      {main && (
+        <>
+          <div className="gt-link"><span>auto copy</span></div>
+          {node(main, pride.name, 'copy of what’s live')}
+        </>
+      )}
+      {clients.length > 0 && (
+        <>
+          <div className="gt-link"><span>new client: a copy of main</span></div>
+          <div className="gt-kids">
+            {clients.map((c) => (
+              <div key={c.name} className="gt-kid">
+                {node(c, 'main', 'deployed from here')}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
       {others.length > 0 && (
         <div className="gt-others">
           <div className="muted small" style={{ marginBottom: 6 }}>Other branches</div>
-          <div className="gt-kids">{others.map((o) => <div key={o.name}>{node(o, roots[0]?.name)}</div>)}</div>
+          <div className="gt-kids">{others.map((o) => <div key={o.name}>{node(o, pride.name)}</div>)}</div>
         </div>
       )}
     </div>
