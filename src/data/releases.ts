@@ -13,6 +13,20 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.21',
+    date: '2026-11-18',
+    title: 'Switch Else path, meeting agenda, invoice regenerate on print, Support in team',
+    summary: 'Migrations 20261118130000_invoice_refresh_seller, 20261118140000_member_directory_support, 20261118150000_meetings_agenda; workflow-runner (Switch Else).',
+    new: [
+      'invoice_refresh_seller(p_invoice) RPC: seller = seller_of(billing company, business) again (bookings add / edit permission).',
+      'meetings.agenda (text, optional).',
+    ],
+    improved: [
+      'member_directory includes the Tech Support Team member (attendance_people still leaves it out).',
+      'workflow-runner: a Switch case with else: true is skipped in the checks and taken when nothing matches.',
+    ],
+  },
+  {
     version: '0.20',
     date: '2026-11-17',
     title: 'Callyzer team calls, call recordings storage, booking delete, deal steps, team meetings',
