@@ -24,6 +24,7 @@ export const releases: Release[] = [
     improved: [
       'member_directory includes the Tech Support Team member (attendance_people still leaves it out).',
       'workflow-runner: a Switch case with else: true is skipped in the checks and taken when nothing matches.',
+      'Git graph (both apps): branch tree (dev_* → deploy/pride → main → new client deploy branches) replaces the branch cards; __GIT_BRANCH__ (vite define, git branch at build / dev start) marks the Current branch; merged-history lines named after their branch.',
     ],
   },
   {
