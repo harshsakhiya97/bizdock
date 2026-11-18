@@ -14,6 +14,20 @@ Two developers work on BizDock at the same time. Same flow in **both repos**:
 
 Never commit straight to `deploy/pride` or `main`.
 
+## Golden rule: always pull before you merge
+
+Before merging into `deploy/pride` (and before starting work each day), **always take a fresh pull first** — the other
+developer may have merged since your last pull:
+
+```bash
+git fetch origin
+git checkout deploy/pride && git pull          # the latest common branch
+git checkout dev_<you> && git pull && git merge origin/deploy/pride   # their work into yours; fix clashes here
+```
+
+Only then merge your branch into `deploy/pride`. Merging into a stale `deploy/pride` makes the push fail, or worse,
+deploys without the other developer's latest work.
+
 ## Daily
 
 1. **Start of the day** — bring in what the other merged:
