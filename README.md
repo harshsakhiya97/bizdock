@@ -1,3 +1,9 @@
+# BizDock
+
+**Developers: read [GIT-FLOW.md](GIT-FLOW.md) first** — branches (`dev_harsh`, `dev_shyam`, `deploy/pride`, `main`), daily work, save / deploy, and the rules for migrations and edge functions.
+
+---
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
