@@ -33,8 +33,24 @@ const call = async <T,>(body: Record<string, unknown>): Promise<T> => {
   return data as T
 }
 
-/** the branch this app is running from: marked Current */
-const CURRENT = typeof __GIT_BRANCH__ === 'string' ? __GIT_BRANCH__ : ''
+/** the branch this app was built / started from: marked Current (on localhost it's read live, see useCurrentBranch) */
+let CURRENT = typeof __GIT_BRANCH__ === 'string' ? __GIT_BRANCH__ : ''
+
+/** localhost: the folder's branch right now (from the dev server), so a git checkout shows without a restart */
+function useCurrentBranch() {
+  const [b, setB] = useState(CURRENT)
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    fetch(`${import.meta.env.BASE_URL}__git_branch`)
+      .then((r) => (r.ok ? r.text() : ''))
+      .then((t) => {
+        const v = t.trim()
+        if (v && !v.startsWith('<')) setB(v)
+      })
+      .catch(() => {})
+  }, [])
+  return b
+}
 
 const COLORS = ['#2563eb', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#dc2626', '#65a30d', '#9333ea', '#0d9488']
 const ROW = 52
@@ -91,6 +107,8 @@ function layout(g: Graph) {
 }
 
 export function GitGraphPage() {
+  // the branch marked Current (module-level so the branch tree sees it too)
+  CURRENT = useCurrentBranch()
   // the admin app: platform owners only
   const dev = true
   const [repo, setRepo] = useState<Repo>('tenant')
