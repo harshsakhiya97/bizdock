@@ -65,11 +65,12 @@ export const WHATSAPP_PROVIDERS: { key: WhatsAppProvider; label: string; descrip
   { key: 'meta', label: 'Meta (Cloud API)', description: 'Phone number ID + permanent access token from Meta Business' },
 ]
 
-export type OtherConnection = 'facebook_ads' | 'callyzer' | 'zoom' | 'voice_call' | 'perisclaw'
+export type OtherConnection = 'facebook_ads' | 'callyzer' | 'zoom' | 'voice_call' | 'perisclaw' | 'razorpay'
 export const OTHER_CONNECTIONS: { key: OtherConnection; label: string; description: string }[] = [
   { key: 'facebook_ads', label: 'Facebook Ads account', description: 'Ad spend and results per campaign, Facebook lead forms' },
   { key: 'callyzer', label: 'Callyzer', description: 'Call logs from the team’s phones, matched to leads' },
   { key: 'zoom', label: 'Zoom', description: 'Webinars and meetings from the calendar, attendance' },
   { key: 'voice_call', label: 'Voice Call', description: 'Automatic one-way voice calls and click-to-call' },
   { key: 'perisclaw', label: 'Perisclaw', description: 'Perisclaw API' },
+  { key: 'razorpay', label: 'Razorpay', description: 'Payments from the Razorpay account, every 5 minutes, matched to leads' },
 ]
