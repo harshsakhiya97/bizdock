@@ -865,8 +865,9 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
       host = pool[((Number(turn) || 1) - 1) % pool.length]
     }
   } else if (d.meet_mode === 'webhook') {
-    // the team member the webhook sent (a Booking Calendar booking sends their email; older ones their id), if still active here
-    const who = String(varValue(ctx.vars, String(d.meet_var || 'member_email')) ?? '').trim()
+    // the team member the webhook sent: the Booking Calendar sends their email (member_email); older steps kept another
+    // field (e.g. member_id, no longer sent), used only when there is no member_email
+    const who = String(varValue(ctx.vars, 'member_email') || (d.meet_var ? varValue(ctx.vars, String(d.meet_var)) : '') || '').trim()
     let mid: string | null = null
     if (/^[0-9a-f-]{36}$/i.test(who)) {
       const { data: m } = await admin.from('tenant_members').select('id').eq('id', who).eq('tenant_id', run.tenant_id).eq('status', 'active').maybeSingle()
