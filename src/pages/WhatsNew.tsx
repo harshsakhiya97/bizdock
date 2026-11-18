@@ -1,4 +1,5 @@
-import { Bug, MinusCircle, Sparkles, TrendingUp } from 'lucide-react'
+import { Link } from 'react-router'
+import { Bug, GitBranch, MinusCircle, Sparkles, TrendingUp } from 'lucide-react'
 import { PageHead } from '@/components/ui'
 import { releases, type Release } from '@/data/releases'
 
@@ -15,7 +16,15 @@ const fmt = (d: string) =>
 export function WhatsNewPage() {
   return (
     <>
-      <PageHead title="What's New" subtitle="Every version of the BizDock app and what it added." />
+      <PageHead
+        title="What's New"
+        subtitle="Every version of the BizDock app and what it added."
+        actions={
+          <Link to="/whats-new/git" className="btn btn-outline btn-sm">
+            <GitBranch size={15} /> Git graph
+          </Link>
+        }
+      />
       <div className="wn-timeline">
         {releases.map((r, i) => (
           <article key={r.version} className="wn-item">

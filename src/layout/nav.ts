@@ -16,6 +16,7 @@ export const pageMeta: Record<string, Meta> = {
   '/clients': { title: 'Clients', crumb: 'Overview', icon: Building2 },
   '/profile': { title: 'My Profile', crumb: 'Overview', icon: User },
   '/whats-new': { title: "What's New", crumb: 'Version history', icon: Sparkles },
+  '/whats-new/git': { title: "What's New", crumb: 'Git graph', icon: Sparkles },
 }
 
 export function metaFor(pathname: string): Meta {

@@ -6,6 +6,7 @@ import { DashboardPage } from '@/pages/Dashboard'
 import { LoginPage } from '@/pages/Login'
 import { ProfilePage } from '@/pages/Profile'
 import { WhatsNewPage } from '@/pages/WhatsNew'
+import { GitGraphPage } from '@/pages/GitGraph'
 import { TenantDetailPage } from '@/tenants/TenantDetailPage'
 import { TenantsPage } from '@/tenants/TenantsPage'
 
@@ -22,6 +23,7 @@ export default function App() {
               <Route path="/clients/:id" element={<TenantDetailPage />} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/whats-new" element={<WhatsNewPage />} />
+              <Route path="/whats-new/git" element={<GitGraphPage />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

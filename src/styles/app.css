@@ -288,3 +288,33 @@ h1, h2, h3, h4, h5 { font-weight: 700; }
 html, body, #root { overflow-x: hidden; overscroll-behavior-x: none; }
 .shell, .main, .page { overscroll-behavior-x: none; }
 .main { overflow-x: clip; }
+
+/* Git graph (What's new → Git graph) */
+.gg-h { margin: 18px 0 10px; font-size: 15px; }
+.gg-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.gg-card { padding: 14px; border-top: 3px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.gg-card.is-old { opacity: .6; }
+.gg-branch { display: flex; align-items: center; gap: 6px; font-size: 14px; word-break: break-all; }
+.gg-who { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.gg-who img, .gg-meta img { width: 18px; height: 18px; border-radius: 50%; }
+.gg-cmp { display: flex; flex-wrap: wrap; gap: 4px; }
+.gg-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.gg-lane-pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--c); color: var(--c); }
+.gg-list { padding: 0; overflow: hidden; }
+.gg-row { display: flex; align-items: stretch; cursor: pointer; }
+.gg-row:hover { background: var(--surface-muted); }
+.gg-row-wrap.is-open > .gg-row { background: var(--brand-soft); }
+.gg-svg { flex: none; display: block; }
+.gg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; padding: 4px 12px 4px 4px; border-bottom: 1px solid var(--line); }
+.gg-msg { display: flex; align-items: center; gap: 6px; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gg-msg > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.gg-meta { display: flex; align-items: center; gap: 6px; }
+.gg-ref { display: inline-flex; align-items: center; gap: 3px; flex: none; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; color: #fff; background: var(--c); }
+.gg-tag { background: #fef3c7; color: #92400e; }
+.gg-detail { padding: 10px 16px 14px 16px; border-bottom: 1px solid var(--line); background: var(--surface-muted); }
+.gg-full { white-space: pre-wrap; font: inherit; font-size: 13px; margin: 0 0 8px; }
+.gg-files { list-style: none; margin: 0; padding: 0; font-size: 12.5px; max-height: 260px; overflow-y: auto; }
+.gg-files li { padding: 2px 0; }
+.gg-st { display: inline-block; min-width: 62px; font-size: 11px; color: var(--muted); }
+.gg-st-added { color: #16a34a; } .gg-st-removed { color: #dc2626; }
+.gg-add { color: #16a34a; } .gg-del { color: #dc2626; }
