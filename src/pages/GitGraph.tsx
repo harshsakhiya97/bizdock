@@ -72,8 +72,12 @@ function layout(g: Graph) {
   for (const b of order) if (walk(b.sha, b.name)) lanes.push({ id: b.name, label: b.name })
   for (const c of g.commits) {
     if (lane.has(c.sha)) continue
+    // a line that isn't a branch's own any more: named after the branch its merge commits went into
+    // ("Merge branch 'main' into deploy/pride" → deploy/pride), else after the branch it was merged from
+    const into = c.message.match(/Merge branch '[^']+' into (\S+)/)?.[1]
     const merge = g.commits.find((m) => m.parents[1] === c.sha)
-    const label = merge?.message.match(/Merge branch '([^']+)'/)?.[1] ?? merge?.message.match(/from [^/\s]+\/(\S+)/)?.[1] ?? 'merged branch'
+    const from = merge?.message.match(/Merge branch '([^']+)'/)?.[1] ?? merge?.message.match(/from [^/\s]+\/(\S+)/)?.[1]
+    const label = `${into ?? from ?? 'merged branch'} (earlier)`
     const id = `x:${c.sha}`
     walk(c.sha, id)
     lanes.push({ id, label })
