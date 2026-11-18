@@ -196,6 +196,9 @@ export function GitGraphPage() {
 
       {g && L && (
         <>
+          <h3 className="gg-h">Branch tree</h3>
+          <BranchTree g={g} color={branchColor} />
+
           <h3 className="gg-h">Currently working on</h3>
           <div className="gg-cards">
             {branches.map((b) => {
@@ -323,5 +326,69 @@ export function GitGraphPage() {
         </>
       )}
     </>
+  )
+}
+
+/** who deploys from what: each deploy/<client> branch, with the developers' dev_* branches under it, and main beside it */
+function BranchTree({ g, color }: { g: Graph; color: (name: string) => string }) {
+  const byName = new Map(g.branches.map((b) => [b.name, b]))
+  const roots = g.branches.filter((b) => b.name.startsWith('deploy/'))
+  const devs = g.branches.filter((b) => b.name.startsWith('dev_') || b.name.startsWith('dev/'))
+  const others = g.branches.filter((b) => b.name !== 'main' && !roots.includes(b) && !devs.includes(b))
+  const main = byName.get('main')
+  const node = (b: Branch, base?: string, note?: string) => {
+    const cmp = base ? g.compare[b.name]?.[base] : null
+    return (
+      <div key={b.name} className={cn('gt-node', b.name === CURRENT && 'is-current')} style={{ ['--c' as string]: color(b.name) }}>
+        <div className="gt-name">
+          <GitBranch size={14} /> {b.name.startsWith('deploy/') ? b.name.slice(7).replace(/^\w/, (x) => x.toUpperCase()) : b.name.replace(/^dev[_/]/, '').replace(/^\w/, (x) => x.toUpperCase())}
+          {b.name === CURRENT && <span className="gg-current">Current</span>}
+        </div>
+        <div className="muted small">
+          <code>{b.name}</code>
+          {note ? ` · ${note}` : ''}
+        </div>
+        <div className="gt-who muted small">
+          {b.avatar && <img src={b.avatar} alt="" />} {b.login ?? b.name_author ?? '—'} · {ago(b.date)}
+        </div>
+        {cmp && (
+          <div className="gt-cmp" title={`${cmp.ahead} commits not merged into ${base} yet; ${cmp.behind} commits of ${base} not taken in yet`}>
+            <span className={cn('badge', cmp.ahead ? 'badge-warning' : 'badge-muted')}>↑{cmp.ahead} to merge</span>
+            <span className={cn('badge', cmp.behind ? 'badge-info' : 'badge-muted')}>↓{cmp.behind} to pull</span>
+          </div>
+        )}
+      </div>
+    )
+  }
+  if (!roots.length) return <div className="muted small">No deploy/ branch yet.</div>
+  return (
+    <div className="gt">
+      {roots.map((r) => (
+        <div key={r.name} className="gt-tree">
+          <div className="gt-top">
+            {node(r, undefined, 'deployed from here')}
+            {main && <div className="gt-side">{node(main, r.name, 'copy of what’s live')}</div>}
+          </div>
+          {devs.length > 0 && (
+            <>
+              <div className="gt-stem" />
+              <div className="gt-kids">
+                {devs.map((d) => (
+                  <div key={d.name} className="gt-kid">
+                    {node(d, r.name)}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      ))}
+      {others.length > 0 && (
+        <div className="gt-others">
+          <div className="muted small" style={{ marginBottom: 6 }}>Other branches</div>
+          <div className="gt-kids">{others.map((o) => <div key={o.name}>{node(o, roots[0]?.name)}</div>)}</div>
+        </div>
+      )}
+    </div>
   )
 }
