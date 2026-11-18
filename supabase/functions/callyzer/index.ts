@@ -23,6 +23,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const nowSec = () => Math.floor(Date.now() / 1000)
 const DAY = 86400
 const BUDGET_MS = 100_000
+// Callyzer sometimes refuses a good key for a moment ("Invalid access token", e.g. around 7 AM): keep trying every
+// 5 minutes, and only mark the connection Error once it has been refused for this long without a break
+const REFUSED_FOR_MS = 60 * 60_000
 const COMBOS: [string, string][] = [
   ['PhoneCall', 'Voice'],
   ['WhatsAppCall', 'Voice'],
@@ -116,10 +119,14 @@ async function pull(admin: SupabaseClient, row: Row, deadline: number): Promise<
       })
       if (!r.ok) {
         const msg = czError(r)
-        // a refused key stops the pulls until it is fixed; other errors are tried again next time
-        await save({ cursor: JSON.stringify(cur), lock_until: '' }, r.status === 401 || r.status === 403 ? { status: 'error', last_error: msg } : { last_error: msg })
+        // a refused key: tried again next time; Error (pulls stop until it's fixed) only after an hour of refusals
+        const refused = r.status === 401 || r.status === 403
+        const since = refused ? cfg.refused_since || new Date().toISOString() : ''
+        const dead = refused && Date.now() - Date.parse(since) > REFUSED_FOR_MS
+        await save({ cursor: JSON.stringify(cur), lock_until: '', refused_since: since }, dead ? { status: 'error', last_error: msg } : { last_error: msg })
         return { saved, done: false, error: msg }
       }
+      if (cfg.refused_since) await save({ refused_since: '' }, { last_error: null })
       const list = (Array.isArray(r.data.result) ? r.data.result : []) as Record<string, unknown>[]
       if (list.length) {
         const { data: n, error } = await admin.rpc('callyzer_ingest', { p_tenant: row.tenant_id, p_rows: list })
@@ -132,7 +139,7 @@ async function pull(admin: SupabaseClient, row: Row, deadline: number): Promise<
     }
     // the window is done
     await save(
-      { cursor: '', synced_until: String(cur.to), lock_until: '', last_sync_at: new Date().toISOString(), last_saved: '0' },
+      { cursor: '', synced_until: String(cur.to), lock_until: '', last_sync_at: new Date().toISOString(), last_saved: '0', refused_since: '' },
       { status: 'connected', last_error: null },
     )
     return { saved, done: true }
@@ -210,7 +217,7 @@ Deno.serve(async (req) => {
     const { data: m } = await admin.from('tenant_members').select('id').eq('tenant_id', tenantId).eq('user_id', me.user.id).maybeSingle()
     const { data: old } = await admin.from('integrations').select('id, config').eq('tenant_id', tenantId).eq('provider', 'callyzer').maybeSingle()
     // a new key keeps how far it has pulled (same Callyzer account); a first connect pulls the last 180 days
-    const config: Config = { ...((old?.config as Config) ?? {}), api_key: apiKey, lock_until: '', cursor: '' }
+    const config: Config = { ...((old?.config as Config) ?? {}), api_key: apiKey, lock_until: '', cursor: '', refused_since: '' }
     const row = { config, status: 'connected', last_error: null, is_enabled: true }
     const { error } = old
       ? await admin.from('integrations').update(row).eq('id', old.id)
