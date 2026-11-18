@@ -13,6 +13,12 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.24',
+    date: '2026-11-19',
+    title: 'Tenant app only',
+    summary: 'No database or edge function changes: the funnel report columns and clickable stat cards are in the tenant app.',
+  },
+  {
     version: '0.23',
     date: '2026-11-18',
     title: 'Razorpay connection and payments',
