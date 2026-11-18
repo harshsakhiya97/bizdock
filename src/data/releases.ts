@@ -34,6 +34,8 @@ export const releases: Release[] = [
     fixed: [
       'InvoicePanel: the drawer key bumps only after a change (no remount on the first load).',
       'Alka\'s 51 logged calls and 1 scheduled follow-up (computer 13 h 30 min ahead) moved back 13 h 30 min.',
+      'MeetingsPage: admins (owner / support) pick My meetings (default), All team members or one member.',
+      'workflow-runner: meet_mode webhook always reads member_email first (an old saved meet_var such as member_id only as a fallback). Deploy workflow-runner.',
     ],
   },
   {
