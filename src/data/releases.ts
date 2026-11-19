@@ -13,6 +13,17 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.25',
+    date: '2026-11-19',
+    title: 'Google Ads, invoice seller fallback',
+    summary: 'Migrations 20261119160000_google_ads, 20261119180000_invoice_refresh_seller_company. Edge function google-ads.',
+    new: [
+      'Google Ads: google_ad_accounts, google_campaigns, google_ad_groups, google_ads, google_insights (per day at campaign / ad group / ad level), funnel_google_links; can_sync_google; pg_cron google-ads-pull every 3 hours (private.kick_google). integrations provider google_ads; Tenants → Other connections: Google Ads.',
+      'Edge function google-ads: test (log in with the saved keys, find the ad accounts), sync, cron (structure every 3 hours, 90 days of history in 30-day steps, last 7 days again daily).',
+    ],
+    fixed: ['invoice_refresh_seller: an invoice without a billing company takes the (sub-)business’s company for its type.'],
+  },
+  {
     version: '0.24',
     date: '2026-11-19',
     title: 'Tenant app only',
