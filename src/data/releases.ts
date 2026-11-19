@@ -16,11 +16,12 @@ export const releases: Release[] = [
     version: '0.25',
     date: '2026-11-19',
     title: 'Google Ads, invoice seller fallback',
-    summary: 'Migrations 20261119160000_google_ads, 20261119180000_invoice_refresh_seller_company. Edge function google-ads.',
+    summary: 'Migrations 20261119160000_google_ads, 20261119180000_invoice_refresh_seller_company, 20261119200000_funnel_flow_source. Edge function google-ads.',
     new: [
       'Google Ads: google_ad_accounts, google_campaigns, google_ad_groups, google_ads, google_insights (per day at campaign / ad group / ad level), funnel_google_links; can_sync_google; pg_cron google-ads-pull every 3 hours (private.kick_google). integrations provider google_ads; Tenants → Other connections: Google Ads.',
       'Edge function google-ads: test (log in with the saved keys, find the ad accounts), sync, cron (structure every 3 hours, 90 days of history in 30-day steps, last 7 days again daily).',
     ],
+    improved: ['funnel_flow_src(funnel, from, to, source): the funnel picture for fb / google / all (ads numbers and leads by UTM source); funnel_flow stays.', 'google-ads: sends the developer token only when saved; clearer Test Account access message.'],
     fixed: ['invoice_refresh_seller: an invoice without a billing company takes the (sub-)business’s company for its type.'],
   },
   {
