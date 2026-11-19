@@ -74,7 +74,9 @@ function errText(d: unknown, status: number) {
   const msg = inner?.message ?? e?.message ?? `Google Ads error ${status}`
   const auth = status === 401 || status === 403 || e?.status === 'UNAUTHENTICATED' || e?.status === 'PERMISSION_DENIED'
   const nice =
-    code === 'DEVELOPER_TOKEN_NOT_APPROVED'
+    code === 'CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION'
+      ? 'The Google Cloud project only has Test Account access: request Explorer (or Basic) access in Google Cloud → Google Ads API.'
+      : code === 'DEVELOPER_TOKEN_NOT_APPROVED'
       ? 'The developer token only has test access: apply for Basic access in the manager account’s API Center.'
       : code === 'DEVELOPER_TOKEN_INVALID' || code === 'DEVELOPER_TOKEN_PROHIBITED'
         ? 'Google refused the developer token.'
@@ -86,7 +88,10 @@ function errText(d: unknown, status: number) {
 
 function api(cfg: Cfg, token: string) {
   const headers = (login?: string) => {
-    const h: Record<string, string> = { Authorization: `Bearer ${token}`, 'developer-token': String(cfg.developer_token ?? '').trim(), 'Content-Type': 'application/json' }
+    // access now follows the Google Cloud project (Explorer / Basic…); a developer token is optional and ignored by Google
+    const h: Record<string, string> = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    const dev = String(cfg.developer_token ?? '').trim()
+    if (dev) h['developer-token'] = dev
     const l = digits(login ?? cfg.login_customer_id)
     if (l) h['login-customer-id'] = l
     return h
