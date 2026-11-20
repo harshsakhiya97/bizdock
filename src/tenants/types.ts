@@ -65,7 +65,7 @@ export const WHATSAPP_PROVIDERS: { key: WhatsAppProvider; label: string; descrip
   { key: 'meta', label: 'Meta (Cloud API)', description: 'Phone number ID + permanent access token from Meta Business' },
 ]
 
-export type OtherConnection = 'facebook_ads' | 'callyzer' | 'zoom' | 'voice_call' | 'perisclaw' | 'razorpay' | 'google_ads' | 'gemini'
+export type OtherConnection = 'facebook_ads' | 'callyzer' | 'zoom' | 'voice_call' | 'perisclaw' | 'razorpay' | 'google_ads' | 'gemini' | 'hellorix'
 export const OTHER_CONNECTIONS: { key: OtherConnection; label: string; description: string }[] = [
   { key: 'facebook_ads', label: 'Facebook Ads account', description: 'Ad spend and results per campaign, Facebook lead forms' },
   { key: 'callyzer', label: 'Callyzer', description: 'Call logs from the team’s phones, matched to leads' },
@@ -75,4 +75,5 @@ export const OTHER_CONNECTIONS: { key: OtherConnection; label: string; descripti
   { key: 'razorpay', label: 'Razorpay', description: 'Payments from the Razorpay account, every 5 minutes, matched to leads' },
   { key: 'google_ads', label: 'Google Ads', description: 'Google Ads spend per campaign / ad group / ad, every 3 hours' },
   { key: 'gemini', label: 'Gemini AI', description: 'Google Gemini API key and model, for AI features (AI Insights)' },
+  { key: 'hellorix', label: 'AI Calling (HelloRix)', description: 'AI voice calls to leads with a script; outcome, summary, answers and cost' },
 ]

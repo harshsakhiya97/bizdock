@@ -35,7 +35,7 @@ type Run = {
   event_id: string | null
   created_at: string
   /** progress inside a step that runs over time */
-  state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string>; hops?: number; lead_found?: boolean; event_id?: string; tries?: number } | null
+  state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string>; hops?: number; lead_found?: boolean; event_id?: string; tries?: number; ai_call?: { node: string; id: string; since: number } | null } | null
 }
 type LogLine = { at: string; node_id: string; kind: string; status: 'ok' | 'skipped' | 'failed' | 'waiting' | 'stopped'; detail: string }
 
@@ -120,7 +120,7 @@ async function advance(admin: SupabaseClient, run: Run) {
   }
   let at = run.node_id
   // waiting inside a Bulk WhatsApp step: carry on with that step
-  let resume = byId.get(at)?.type === 'bulk_whatsapp' && state.bulk?.node === at
+  let resume = (byId.get(at)?.type === 'bulk_whatsapp' && state.bulk?.node === at) || (byId.get(at)?.type === 'ai_call' && state.ai_call?.node === at)
   // a Switch / Yes-No step picks the next step itself
   let jump: Node | null | undefined
   for (let i = 0; i < MAX_STEPS; i++) {
@@ -336,6 +336,79 @@ async function advance(admin: SupabaseClient, run: Run) {
         note(n, 'failed', (e as Error).message)
         return save({ status: 'failed', node_id: at, error: (e as Error).message })
       }
+    } else if (n.type === 'ai_call') {
+      // AI call (HelloRix): place the call, wait for its result (the call's webhook wakes this run), then go down the
+      // path of its outcome: Interested / Call back / Not interested / Not reached
+      const st = state.ai_call
+      if (!st || st.node !== n.id) {
+        let placed: { id?: string; error?: string } = {}
+        try {
+          let to: string | null = null
+          let name: string | null = null
+          if (d.to === 'team') {
+            const { data: m } = d.member_id ? await admin.from('tenant_members').select('user_id').eq('id', String(d.member_id)).maybeSingle() : { data: null }
+            const { data: p } = m?.user_id ? await admin.from('profiles').select('phone, full_name').eq('id', m.user_id).maybeSingle() : { data: null }
+            to = waNumber(p?.phone)
+            name = (p?.full_name as string) ?? null
+            if (!to) throw new Error('The team member has no phone number on their profile.')
+          } else if (d.to === 'custom') {
+            to = waNumber(fill(String(d.custom_phone ?? ''), ctx.vars))
+            if (!to) throw new Error('The custom number is not a valid 10-digit number.')
+          } else {
+            to = waNumber(ctx.leadPhone)
+            name = ctx.vars.name ?? null
+            if (!to) throw new Error('The lead has no valid phone number.')
+          }
+          const { data: secret } = await admin.rpc('workflow_cron_secret')
+          const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/hellorix`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-cron-secret': String(secret ?? '') },
+            body: JSON.stringify({
+              action: 'run_call',
+              tenant_id: run.tenant_id,
+              run_id: run.id,
+              lead_id: !d.to || d.to === 'lead' ? run.lead_id : null,
+              to,
+              name,
+              objective_id: d.objective_id,
+              variables: { customer_name: (name ?? '').split(/\s+/)[0] || 'ji', city: ctx.vars.city ?? '' },
+            }),
+          })
+          placed = await r.json().catch(() => ({ error: `AI Calling error ${r.status}` }))
+          if (!r.ok || placed.error) throw new Error(placed.error ?? `AI Calling error ${r.status}`)
+        } catch (e) {
+          // not placed: down Not reached (or the workflow ends there)
+          note(n, 'failed', `AI call not placed: ${(e as Error).message}`)
+          const edge = edges.find((x) => x.source === n.id && x.sourceHandle === 'not_reached')
+          if (!edge) return save({ status: 'done', node_id: n.id, error: null })
+          jump = byId.get(edge.target) ?? null
+          at = n.id
+          continue
+        }
+        state.ai_call = { node: n.id, id: String(placed.id), since: Date.now() }
+        note(n, 'waiting', `AI call placed (${String(d.objective_name ?? 'template')}): waiting for its result`)
+        // checked again when the result comes in (or every 10 minutes)
+        return save({ status: 'waiting', node_id: n.id, next_at: new Date(Date.now() + 10 * 60_000).toISOString() })
+      }
+      const { data: call } = await admin.from('ai_calls').select('final, status, outcome, summary, collected, talk_seconds, cost').eq('id', st.id).maybeSingle()
+      if (call && !call.final && Date.now() - st.since < 3 * 3600_000) {
+        return save({ status: 'waiting', node_id: n.id, next_at: new Date(Date.now() + 10 * 60_000).toISOString() })
+      }
+      const out = String(call?.outcome ?? '').toLowerCase()
+      const path = out === 'interested' ? 'interested' : out === 'callback' || out === 'deferred' ? 'callback' : out === 'declined' ? 'declined' : 'not_reached'
+      const LABEL: Record<string, string> = { interested: 'Interested', callback: 'Call back', declined: 'Not interested', not_reached: 'Not reached' }
+      const got: Record<string, string> = { ai_call_outcome: LABEL[path], ai_call_summary: String(call?.summary ?? '') }
+      for (const [k, v] of Object.entries((call?.collected ?? {}) as Record<string, unknown>)) if (v != null && typeof v !== 'object') got[`ai_${varKey(k)}`] = String(v)
+      state.vars = { ...(state.vars ?? {}), ...got }
+      Object.assign(ctx.vars, got)
+      state.ai_call = null
+      const edge = edges.find((x) => x.source === n.id && x.sourceHandle === path)
+      if (!edge) {
+        note(n, 'ok', `${LABEL[path]}${call?.final ? '' : ' (no result after 3 hours)'}: that path has no next step, so the workflow ends here.`)
+        return save({ status: 'done', node_id: n.id, error: null })
+      }
+      note(n, 'ok', `${LABEL[path]}${call?.summary ? ` · ${String(call.summary).slice(0, 160)}` : ''}`)
+      jump = byId.get(edge.target) ?? null
     } else if (n.type === 'wait') {
       const ms = Math.max(1, Number(d.amount) || 1) * (UNIT_MS[String(d.unit)] ?? UNIT_MS.days)
       const until = new Date(Date.now() + ms)
