@@ -13,6 +13,21 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.26',
+    date: '2026-11-20',
+    title: 'One level of businesses, Gemini AI',
+    summary: 'Migrations 20261119210000_gemini, 20261120150000_flat_businesses. Edge function gemini.',
+    new: [
+      'Gemini AI: integrations provider gemini; ai_usage + ai_usage_month(tenant); Tenants → Other connections: Gemini AI. Edge function gemini: models (the typed or saved key’s text models, for the dropdown) and test (check the key, save the model).',
+      'private.is_studio_biz(business, sub): Studio Rental / Paid Podcast by the sub-business’s type, else the business’s.',
+    ],
+    improved: [
+      'Every sub-business became a business (same id) with its records (leads follow their funnel); parents with sub-businesses switched off (kept); member_businesses rows added per sub-business; sub_businesses switched off (kept).',
+      'booking_before_save and studio_busy: the studio is shared by the workspace’s studio businesses (was: inside one business).',
+      'next_invoice_no / invoice_create / assign_booking_invoice: numbers from a billing company only (the business’s company when none is picked); no per-business counter.',
+    ],
+  },
+  {
     version: '0.25',
     date: '2026-11-19',
     title: 'Google Ads, invoice seller fallback',
