@@ -1,5 +1,7 @@
 // gemini: a workspace's Gemini AI connection (System Connections → Gemini AI: API key + model).
 //
+//   POST { action: 'models', api_key? | id? }  from the app (the Keys form): the models a key can use, for the dropdown
+//                                 (the typed key, else the saved one of that connection)
 //   POST { action: 'test', id }   from the app (on save): check the key with Google, list the models it can use (saved on
 //                                 the connection for the Model dropdown) and pick a default model if none is set
 //
@@ -57,6 +59,21 @@ Deno.serve(async (req) => {
   const { data: me } = await asCaller.auth.getUser()
   if (!me.user) return fail('Please log in again.', 401)
   const b = (await req.json().catch(() => ({}))) as Record<string, unknown>
+
+  if (b.action === 'models') {
+    let key = String(b.api_key ?? '').trim()
+    if (!key && b.id) {
+      const { data: r } = await asCaller.from('integrations').select('config').eq('id', String(b.id)).eq('provider', 'gemini').maybeSingle()
+      key = String((r?.config as Record<string, string> | undefined)?.api_key ?? '').trim()
+    }
+    if (!key) return fail('Enter the API key.')
+    try {
+      const models = await listModels(key)
+      return json({ ok: true, models, default: pickDefault(models) })
+    } catch (e) {
+      return fail((e as Error).message)
+    }
+  }
 
   if (b.action === 'test') {
     // only people who can read the keys (System Connections)
