@@ -13,6 +13,20 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.27',
+    date: '2026-11-20',
+    title: 'Podcast studios, menu permissions, webinar host = team member',
+    summary: 'Migrations 20261120170000_podcast_studios, 20261120190000_my_calendar_access. Tenant app only otherwise (no edge function).',
+    new: [
+      'podcast_studios (one default per workspace, trigger keeps it single); bookings.studio_id (default studio on studio bookings); seeded Podcast Studio - Vakola for workspaces with a studio business.',
+      'webinars.host_member_id (a team member).',
+    ],
+    improved: [
+      'booking_before_save: studio check per studio; studio_busy returns studio_id / studio_name.',
+      'Permissions calendar.view, booking_list.view, orders.view, webinars.edit added to every role (from bookings); presets open My Calendar; webinars / webinar_groups / webinar_reschedule / webinar_delete_date on webinars.edit.',
+    ],
+  },
+  {
     version: '0.26',
     date: '2026-11-20',
     title: 'One level of businesses, Gemini AI',
