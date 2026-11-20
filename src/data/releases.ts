@@ -13,6 +13,16 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.29',
+    date: '2026-11-20',
+    title: 'AI Insights',
+    summary: 'Migration 20261120230000_ai_insights. Edge function gemini.',
+    new: [
+      'ai_insights_me(tenant): the caller’s member id when they have ai_insights.view.',
+      'Edge function gemini: insights_status (allowed / connected) and insights (the screen text and list rows, already masked by the app → Gemini generateContent; tokens in ai_usage with feature insights; stops at config.monthly_limit using config.price_in / price_out, ₹ per 1M tokens).',
+    ],
+  },
+  {
     version: '0.28',
     date: '2026-11-20',
     title: 'AI Calling (HelloRix)',
