@@ -115,7 +115,7 @@ function stripAuto(text: string) {
 }
 
 type Field = { field: string; type?: string; required?: boolean; how_to_ask?: string; options?: string | string[] }
-function cleanTemplate(input: Record<string, unknown>, cfg: Cfg) {
+function cleanTemplate(input: Record<string, unknown>) {
   const o: Record<string, unknown> = {}
   for (const k of ['name', 'kind', 'purpose', 'ask', 'scenario', 'if_they_push_back', 'closing', 'give_up', 'voice_id', 'persona_id']) {
     const v = typeof input[k] === 'string' ? (input[k] as string).trim() : input[k]
@@ -136,29 +136,31 @@ function cleanTemplate(input: Record<string, unknown>, cfg: Cfg) {
     if (!o.ask) o.ask = RAW_ASK
   }
   const k = o.scenario ? 'scenario' : 'purpose'
-  if (on(cfg.fixed_opening)) {
+  // the fixed opening and the language question: chosen on each template
+  if (on(input.fixed_opening)) {
     if (o[k] && !String(o[k]).includes(OPENING_MARK)) o[k] = `${OPENING_BLOCK}\n\n${o[k]}`
     if (!collect.some((x) => x.field === 'callback_time')) collect.push({ field: 'callback_time', type: 'text', required: false, how_to_ask: 'If they are busy, ask when to call back' })
   }
-  if (on(cfg.lang_step)) {
+  if (on(input.lang_step)) {
     if (o[k] && !String(o[k]).includes(LANG_MARK)) o[k] = `${o[k]}\n\n${LANG_BLOCK}`
     if (!collect.some((x) => x.field === 'preferred_language'))
       collect = [{ field: 'preferred_language', type: 'choice', required: true, options: ['Hindi', 'English'], how_to_ask: 'Ask whether they are more comfortable in Hindi or English' }, ...collect]
   }
   if (collect.length) o.collect = collect.slice(0, 20)
-  if (!o.voice_id && cfg.voice_id) o.voice_id = cfg.voice_id
-  if (!o.persona_id && cfg.persona_id) o.persona_id = cfg.persona_id
   if (!o.name) throw new Error('Give the template a name.')
   if (!o.purpose && !o.scenario) throw new Error('Write the opening & purpose, or the full call prompt.')
   if (!o.ask) throw new Error('Write what to ask.')
   return o
 }
-function forEditor(o: Record<string, unknown>, cfg: Cfg) {
+function forEditor(o: Record<string, unknown>) {
   const a = { ...o }
+  // which auto blocks the template has (shown as its two ticks), then hidden from the text
+  const text = ['purpose', 'scenario', 'prompt'].map((k) => (typeof a[k] === 'string' ? (a[k] as string) : '')).join('\n')
+  const fixed = text.includes(OPENING_MARK)
+  const lang = text.includes(LANG_MARK)
   for (const k of ['purpose', 'scenario', 'prompt']) if (typeof a[k] === 'string') a[k] = stripAuto(a[k] as string)
-  if (Array.isArray(a.collect))
-    a.collect = (a.collect as Field[]).filter((x) => !((x.field === 'callback_time' && on(cfg.fixed_opening)) || (x.field === 'preferred_language' && on(cfg.lang_step))))
-  return { ...a, raw: a.ask === RAW_ASK || a.prompt_mode === 'raw' }
+  if (Array.isArray(a.collect)) a.collect = (a.collect as Field[]).filter((x) => !((x.field === 'callback_time' && fixed) || (x.field === 'preferred_language' && lang)))
+  return { ...a, raw: a.ask === RAW_ASK || a.prompt_mode === 'raw', fixed_opening: fixed, lang_step: lang }
 }
 
 // ---------- calls ----------
@@ -189,8 +191,8 @@ async function placeCall(
   if (!d) throw new Error('Only Indian mobile numbers (10 digits) can be called.')
   const off = inHours(cfg)
   if (off) throw new Error(off)
-  const objective = String(p.objective_id || cfg.default_objective || '').trim()
-  if (!objective) throw new Error('Pick the template (or set a default one in System Connections → AI Calling).')
+  const objective = String(p.objective_id || '').trim()
+  if (!objective) throw new Error('Pick the template.')
   let lead: Record<string, string | null> | null = null
   if (p.lead_id) {
     const { data } = await db.from('leads').select('id, first_name, last_name, city, purpose, business_id').eq('id', p.lead_id).maybeSingle()
@@ -206,8 +208,6 @@ async function placeCall(
     variables: { customer_name: first, city: lead?.city ?? '', ...(p.variables ?? {}) },
     post_call_insights: cfg.insights === 'outcome' ? 'outcome' : 'full',
     ...(cfg.from_number ? { from_number: cfg.from_number } : {}),
-    ...(cfg.voice_id ? { voice_id: cfg.voice_id } : {}),
-    ...(cfg.persona_id ? { persona_id: cfg.persona_id } : {}),
     webhook_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/hellorix?i=${conn.id}`,
     ...(cfg.webhook_secret ? { webhook_secret: cfg.webhook_secret } : {}),
     request_id: requestId,
@@ -511,20 +511,12 @@ Deno.serve(async (req) => {
       } catch {
         opts = {}
       }
-      return json({
-        ok: true,
-        templates: list,
-        default: conn?.config?.default_objective ?? null,
-        voices: opts.voices ?? [],
-        personas: opts.personas ?? [],
-        fixed_opening: on(conn?.config?.fixed_opening),
-        lang_step: on(conn?.config?.lang_step),
-      })
+      return json({ ok: true, templates: list, voices: opts.voices ?? [], personas: opts.personas ?? [] })
     }
     if (b.action === 'template') {
       const r = await hx(key(), 'GET', `/voice/objectives/${encodeURIComponent(String(b.objective_id))}`)
       if (r.status >= 300) throw new Error(friendly(r.d, r.status))
-      return json({ ok: true, template: forEditor(r.d, conn!.config ?? {}) })
+      return json({ ok: true, template: forEditor(r.d) })
     }
     if (b.action === 'template_save' || b.action === 'template_delete') {
       if (!(await can('ai_calling', 'templates'))) return fail('You can’t manage AI calling templates.', 403)
@@ -533,7 +525,7 @@ Deno.serve(async (req) => {
         if (r.status >= 300 && r.status !== 404) throw new Error(friendly(r.d, r.status))
         return json({ ok: true })
       }
-      const body = cleanTemplate((b.form ?? {}) as Record<string, unknown>, conn!.config ?? {})
+      const body = cleanTemplate((b.form ?? {}) as Record<string, unknown>)
       const r = b.objective_id
         ? await hx(key(), 'PUT', `/voice/objectives/${encodeURIComponent(String(b.objective_id))}`, body)
         : await hx(key(), 'POST', '/voice/objectives', body)
