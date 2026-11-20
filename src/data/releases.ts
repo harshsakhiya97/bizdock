@@ -13,6 +13,19 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.28',
+    date: '2026-11-20',
+    title: 'AI Calling (HelloRix)',
+    summary: 'Migration 20261120210000_ai_calling. Edge functions hellorix (new) and workflow-runner.',
+    new: [
+      'ai_calls (calls with outcome, summary, collected answers, recording, duration, cost; RLS by ai_calls scope or a visible lead); integrations provider hellorix; Tenants → Other connections: AI Calling (HelloRix).',
+      'Edge function hellorix: options / test, templates (HelloRix objectives) add / edit / delete, draft (Gemini), call, detail, sync; the signed HelloRix webhook; cron hellorix-sync every 5 minutes; run_call for workflows.',
+      'workflow-runner: the ai_call step (places the call, waits; ai_calls_done wakes the run) with exits interested / callback / declined / not_reached.',
+      'ai_calling_can(tenant, action); every role gets ai_calling.view from leads.add, ai_calls scope own.',
+    ],
+    fixed: ['hellorix finds the connection by updated_at (integrations has no created_at).'],
+  },
+  {
     version: '0.27',
     date: '2026-11-20',
     title: 'Podcast studios, menu permissions, webinar host = team member',
