@@ -79,7 +79,7 @@ const listOf = (d: Record<string, unknown>, k: string) => ((d[k] ?? d.data ?? []
 
 // ---------- the connection ----------
 async function connOf(db: SupabaseClient, tenantId: string): Promise<Conn | null> {
-  const { data } = await db.from('integrations').select('id, tenant_id, config, status').eq('tenant_id', tenantId).eq('provider', 'hellorix').eq('is_enabled', true).order('created_at').limit(1).maybeSingle()
+  const { data } = await db.from('integrations').select('id, tenant_id, config, status').eq('tenant_id', tenantId).eq('provider', 'hellorix').eq('is_enabled', true).order('updated_at', { ascending: false }).limit(1).maybeSingle()
   return (data as Conn | null) ?? null
 }
 const keyOf = (c: Conn | null) => {
