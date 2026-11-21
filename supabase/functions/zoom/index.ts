@@ -4,6 +4,8 @@
 //   { action: 'sync', kind: 'meeting' | 'event', id }       create / move the Zoom meeting (or webinar) of a CRM meeting / calendar event
 //   { action: 'delete', account, zoom_id, kind, clear?, clear_event? }   remove it from Zoom (and clear it on the row)
 //   { action: 'cron' }                                        pull attendance / Q&A / chat for everything that has ended
+//   { action: 'rec_find' }                                    find the cloud recordings of what ended (→ meeting_recordings)
+//   { action: 'rec_work' }                                    copy recordings into storage, then transcript + summary (Gemini)
 //   { action: 'create_adhoc', tenant_id, account?, topic, start, duration }   workflow step (no lead) → { id, join_url, password, start_url }
 //   { action: 'book_meeting', meeting_id, account?, topic? }  workflow step: the Zoom meeting of a CRM meeting it just added
 //   { action: 'register', event_id, email?, first_name, last_name?, phone }   workflow step (Register for webinar): a registrant of the date's
@@ -12,6 +14,7 @@
 //   { action: 'test', id }                                    check an account's keys (Settings & integrations)
 //   { action: 'pull', kind, id }                              fetch attendance / comments now
 //   { action: 'sync', kind, id }                              retry creating the Zoom meeting
+//   { action: 'rec_ai', id, copy? }                           make a recording's transcript / summary again (and copy again)
 //
 // Keys never reach the browser. Times are India time.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
@@ -505,7 +508,296 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
       zoom_error: notes.length && !att.length && !retry ? notes.join(' · ') : null,
     })
     .eq('id', id)
-  return { ok: true, attendees: att.length, questions: qaRows.length, polls: pollRows.length, chat: chatRows.length, chat_found: chatFound, notes }
+  // the cloud recording (copied, transcribed and summarised by rec_work)
+  let recording = false
+  try {
+    const f = await findRecording(admin, kind, id)
+    recording = f.found
+    if (!f.found && f.note && Date.now() - endAt > 30 * 60_000) notes.push(f.note)
+  } catch (e) {
+    notes.push(`Recording: ${(e as Error).message}`)
+  }
+  return { ok: true, attendees: att.length, questions: qaRows.length, polls: pollRows.length, chat: chatRows.length, chat_found: chatFound, recording, notes }
+}
+
+// ---------------- recordings (meeting_recordings, bucket meeting-recordings) ----------------
+const REC_BUCKET = 'meeting-recordings'
+const SUPA_URL = Deno.env.get('SUPABASE_URL')!
+const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+const VIDEO_PREF = ['shared_screen_with_speaker_view', 'shared_screen_with_speaker_view(CC)', 'active_speaker', 'speaker_view', 'shared_screen_with_gallery_view', 'gallery_view', 'shared_screen']
+
+/** Zoom's recording of a meeting / webinar date → one meeting_recordings row to copy (once its files are ready) */
+async function findRecording(admin: SupabaseClient, kind: 'meeting' | 'event', id: string): Promise<{ found: boolean; note?: string }> {
+  const table = kind === 'meeting' ? 'meetings' : 'events'
+  const { data: row } = await admin.from(table).select('*').eq('id', id).maybeSingle()
+  const zoomId = kind === 'meeting' ? row?.zoom_meeting_id : row?.zoom_webinar_id
+  if (!row || !zoomId) return { found: false }
+  await admin.from(table).update({ rec_checked_at: new Date().toISOString() }).eq('id', id)
+  const a = await loadAccount(admin, row.zoom_account_id)
+  if (!a) return { found: false }
+  let rec: Row
+  try {
+    rec = await zoom(a, 'GET', `/meetings/${zoomId}/recordings`)
+  } catch (e) {
+    // 3301: no recording (not recorded, or not cloud recording)
+    if (e instanceof ZoomError && (e.status === 404 || e.code === 3301)) return { found: false, note: 'Recording: none on Zoom (was cloud recording on?).' }
+    return { found: false, note: `Recording: ${(e as Error).message}` }
+  }
+  const files = ((rec.recording_files as Row[]) ?? []).filter((f) => f.download_url)
+  const media = files.filter((f) => f.file_type === 'MP4' || f.file_type === 'M4A')
+  if (!media.length) return { found: false, note: 'Recording: none on Zoom yet.' }
+  if (media.some((f) => f.status && f.status !== 'completed')) return { found: false, note: 'Recording: Zoom is still processing it.' }
+  const uuid = String(rec.uuid ?? `${zoomId}-${rec.start_time ?? ''}`)
+  const { data: have } = await admin.from('meeting_recordings').select('id').eq('tenant_id', row.tenant_id).eq('zoom_uuid', uuid).maybeSingle()
+  if (have) return { found: true }
+  const keep = files
+    .filter((f) => ['MP4', 'M4A', 'TRANSCRIPT'].includes(String(f.file_type)))
+    .map((f) => ({ id: f.id, file_type: f.file_type, recording_type: f.recording_type, file_size: f.file_size, file_extension: f.file_extension, download_url: f.download_url }))
+  const { error } = await admin.from('meeting_recordings').insert({
+    tenant_id: row.tenant_id,
+    meeting_id: kind === 'meeting' ? id : null,
+    event_id: kind === 'event' ? id : null,
+    source: 'zoom',
+    title: String(rec.topic ?? row.title ?? 'Zoom recording'),
+    zoom_uuid: uuid,
+    zoom_files: keep,
+    recorded_at: rec.start_time ?? null,
+    duration_sec: rec.duration ? Number(rec.duration) * 60 : null,
+    copy_status: 'waiting',
+    ai_status: 'waiting',
+  })
+  if (error && !/duplicate/i.test(error.message)) return { found: false, note: `Recording: ${error.message}` }
+  return { found: true }
+}
+
+/** a file from a URL streamed straight into our bucket (no full copy in memory) → its size */
+async function streamToStorage(url: string, path: string, mime: string): Promise<number> {
+  const res = await fetch(url)
+  if (!res.ok || !res.body) throw new Error(`download answered ${res.status}`)
+  const len = res.headers.get('content-length')
+  const up = await fetch(`${SUPA_URL}/storage/v1/object/${REC_BUCKET}/${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY, 'Content-Type': mime, 'x-upsert': 'true', ...(len ? { 'Content-Length': len } : {}) },
+    body: res.body,
+    duplex: 'half',
+  } as RequestInit)
+  if (!up.ok) {
+    const t = await up.text().catch(() => '')
+    if (up.status === 413 || /maximum allowed size|too large/i.test(t))
+      throw new Error('the file is bigger than the storage upload limit (Supabase → Storage → Settings → Upload file size limit)')
+    throw new Error(`storage answered ${up.status} ${t.slice(0, 200)}`)
+  }
+  return Number(len) || 0
+}
+
+/** Zoom's transcript (WebVTT) as readable lines: [mm:ss] Name: text */
+function vttText(vtt: string) {
+  const out: string[] = []
+  for (const block of vtt.replace(/\r/g, '').split(/\n\n+/)) {
+    const lines = block.split('\n').filter(Boolean)
+    const ti = lines.findIndex((l) => l.includes('-->'))
+    if (ti < 0) continue
+    const m = /(\d+):(\d+):(\d+)/.exec(lines[ti])
+    const at = m ? `${String(Number(m[1]) * 60 + Number(m[2])).padStart(2, '0')}:${m[3]}` : ''
+    const text = lines.slice(ti + 1).join(' ').trim()
+    if (text) out.push(`[${at}] ${text}`)
+  }
+  return out.join('\n')
+}
+
+const REC_PROMPT = `This is the recording of a business meeting in India (usually a sales or client meeting; it may be in Hindi, English or Hinglish).
+Return JSON with:
+- "transcript": the full conversation, one line per turn: "[mm:ss] Speaker: words". Use people's names when they are said, else "Host" / "Client" / "Speaker 1". Write Hindi in Roman script (Hinglish), as spoken.
+- "summary": in simple English, Markdown bullets under these bold headings: **Purpose**, **Key points**, **What the client asked / objections**, **Prices and offers mentioned**, **Decisions**, **Next steps** (who does what, by when). Use only what was said; write "—" where nothing was said.`
+const SUMMARY_PROMPT = `Below is the transcript of a business meeting in India (it may be in Hindi, English or Hinglish).
+Return JSON with "summary": in simple English, Markdown bullets under these bold headings: **Purpose**, **Key points**, **What the client asked / objections**, **Prices and offers mentioned**, **Decisions**, **Next steps** (who does what, by when). Use only what was said; write "—" where nothing was said.
+
+TRANSCRIPT:
+`
+
+/** the workspace's Gemini connection, or why AI can't run */
+async function geminiFor(admin: SupabaseClient, tenantId: string) {
+  const { data: conn } = await admin.from('integrations').select('id, config').eq('tenant_id', tenantId).eq('provider', 'gemini').eq('is_enabled', true).order('updated_at', { ascending: false }).limit(1).maybeSingle()
+  const cfg = (conn?.config ?? {}) as Record<string, string>
+  const key = String(cfg.api_key ?? '').trim()
+  if (!conn || !key) return { error: 'Connect Gemini AI in System Connections for the transcript and summary.' }
+  const limit = Number(cfg.monthly_limit || 0)
+  if (limit > 0) {
+    const ist = new Date(Date.now() + 330 * 60_000)
+    const start = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1) - 330 * 60_000).toISOString()
+    const { data } = await admin.from('ai_usage').select('input_tokens, output_tokens').eq('tenant_id', tenantId).gte('created_at', start).limit(100000)
+    const rows = (data ?? []) as { input_tokens: number; output_tokens: number }[]
+    const spent = rows.reduce((t, r) => t + Number(r.input_tokens) * Number(cfg.price_in || 0) + Number(r.output_tokens) * Number(cfg.price_out || 0), 0) / 1e6
+    if (spent >= limit) return { error: `This month’s AI limit (₹${limit}) is used up.` }
+  }
+  return { id: String(conn.id), key, model: String(cfg.model || 'gemini-flash-latest') }
+}
+
+/** our stored file → Gemini's Files API (streamed), ready to use */
+async function toGemini(key: string, path: string, size: number, mime: string) {
+  if (!size) {
+    const info = await fetch(`${SUPA_URL}/storage/v1/object/info/${REC_BUCKET}/${path}`, { headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY } })
+    const j = await info.json().catch(() => ({}))
+    size = Number(j?.size ?? j?.metadata?.size ?? 0)
+  }
+  if (!size) throw new Error('could not read the file size')
+  const start = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files`, {
+    method: 'POST',
+    headers: {
+      'x-goog-api-key': key,
+      'X-Goog-Upload-Protocol': 'resumable',
+      'X-Goog-Upload-Command': 'start',
+      'X-Goog-Upload-Header-Content-Length': String(size),
+      'X-Goog-Upload-Header-Content-Type': mime,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ file: { display_name: path.split('/').pop() } }),
+  })
+  const uploadUrl = start.headers.get('x-goog-upload-url')
+  if (!start.ok || !uploadUrl) throw new Error(`Gemini upload: ${start.status} ${(await start.text()).slice(0, 200)}`)
+  const src = await fetch(`${SUPA_URL}/storage/v1/object/${REC_BUCKET}/${path}`, { headers: { Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY } })
+  if (!src.ok || !src.body) throw new Error(`reading the recording: ${src.status}`)
+  const up = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: { 'Content-Length': String(size), 'X-Goog-Upload-Offset': '0', 'X-Goog-Upload-Command': 'upload, finalize' },
+    body: src.body,
+    duplex: 'half',
+  } as RequestInit)
+  const j = await up.json().catch(() => ({}))
+  type GFile = { name: string; uri: string; state?: string; mimeType?: string }
+  if (!up.ok || !j?.file?.uri) throw new Error(`Gemini upload: ${up.status} ${JSON.stringify(j).slice(0, 200)}`)
+  let file = j.file as GFile
+  for (let i = 0; i < 40 && file.state === 'PROCESSING'; i++) {
+    await new Promise((r) => setTimeout(r, 3000))
+    file = await (await fetch(`https://generativelanguage.googleapis.com/v1beta/${file.name}`, { headers: { 'x-goog-api-key': key } })).json()
+  }
+  if (file.state === 'FAILED') throw new Error('Gemini could not read the recording')
+  return file
+}
+
+async function geminiJson(g: { key: string; model: string }, parts: unknown[], props: Record<string, unknown>) {
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(g.model)}:generateContent`, {
+    method: 'POST',
+    headers: { 'x-goog-api-key': g.key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts }],
+      generationConfig: { temperature: 0.2, maxOutputTokens: 60000, responseMimeType: 'application/json', responseSchema: { type: 'OBJECT', properties: props, required: Object.keys(props) } },
+    }),
+  })
+  const d = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(d?.error?.message ? `Gemini: ${d.error.message}` : `Gemini error ${r.status}`)
+  const text = ((d?.candidates?.[0]?.content?.parts ?? []) as { text?: string; thought?: boolean }[]).filter((p) => !p.thought).map((p) => p.text ?? '').join('')
+  const u = d?.usageMetadata ?? {}
+  let out: Record<string, string> = {}
+  try {
+    out = JSON.parse(text)
+  } catch {
+    throw new Error(`Gemini gave no usable answer (${d?.candidates?.[0]?.finishReason ?? 'empty'})`)
+  }
+  return { out, inTok: Number(u.promptTokenCount ?? 0), outTok: Number(u.candidatesTokenCount ?? 0) + Number(u.thoughtsTokenCount ?? 0) }
+}
+
+const extOf = (p: string) => p.split('.').pop()?.toLowerCase() ?? ''
+const mimeOf = (p: string) => ({ mp4: 'video/mp4', m4a: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav', webm: 'video/webm', mov: 'video/quicktime', ogg: 'audio/ogg', aac: 'audio/aac' })[extOf(p)] ?? 'application/octet-stream'
+
+/** one claimed recording: copy its files, then the transcript and summary (and the note on the lead) */
+async function workRecording(admin: SupabaseClient, id: string, deadline: number) {
+  const { data: r } = await admin.from('meeting_recordings').select('*').eq('id', id).maybeSingle()
+  if (!r) return
+  // 1. copy from Zoom
+  if (r.copy_status === 'waiting') {
+    try {
+      const parent = r.meeting_id
+        ? (await admin.from('meetings').select('zoom_account_id').eq('id', r.meeting_id).maybeSingle()).data
+        : (await admin.from('events').select('zoom_account_id').eq('id', r.event_id).maybeSingle()).data
+      const a = await loadAccount(admin, parent?.zoom_account_id)
+      if (!a) throw new Error('its Zoom account was removed or switched off')
+      const files = (r.zoom_files ?? []) as Row[]
+      const withToken = async (u: unknown) => `${u}${String(u).includes('?') ? '&' : '?'}access_token=${await tokenFor(a)}`
+      const d = new Date(r.recorded_at ?? r.created_at)
+      const base = `${r.tenant_id}/${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${r.id}`
+      const patch: Row = {}
+      const notes: string[] = []
+      const audio = files.find((f) => f.file_type === 'M4A')
+      if (audio) {
+        patch.audio_size = (await streamToStorage(await withToken(audio.download_url), `${base}-audio.m4a`, 'audio/mp4')) || Number(audio.file_size) || null
+        patch.audio_path = `${base}-audio.m4a`
+      }
+      const videos = files.filter((f) => f.file_type === 'MP4')
+      const video = VIDEO_PREF.map((t) => videos.find((f) => f.recording_type === t)).find(Boolean) ?? videos[0]
+      if (video) {
+        try {
+          patch.video_size = (await streamToStorage(await withToken(video.download_url), `${base}-video.mp4`, 'video/mp4')) || Number(video.file_size) || null
+          patch.video_path = `${base}-video.mp4`
+        } catch (e) {
+          // the audio is enough for the transcript; the video can be retried later
+          if (!audio) throw e
+          notes.push(`Video not copied: ${(e as Error).message}`)
+        }
+      }
+      const vtt = files.find((f) => f.file_type === 'TRANSCRIPT')
+      if (vtt) {
+        const t = await fetch(await withToken(vtt.download_url))
+        if (t.ok) patch.transcript = vttText(await t.text()) || null
+      }
+      await admin.from('meeting_recordings').update({ ...patch, copy_status: 'done', copy_error: notes.join(' · ') || null }).eq('id', id)
+      Object.assign(r, patch, { copy_status: 'done' })
+    } catch (e) {
+      const tries = Number(r.copy_tries) + 1
+      await admin.from('meeting_recordings').update({ copy_tries: tries, copy_error: (e as Error).message.slice(0, 300), copy_status: tries >= 5 ? 'error' : 'waiting' }).eq('id', id)
+      return
+    }
+  }
+  // 2. transcript and summary
+  if (r.copy_status !== 'done' || r.ai_status !== 'waiting' || Date.now() > deadline - 150_000) return
+  const g = await geminiFor(admin, r.tenant_id)
+  if ('error' in g) {
+    await admin.from('meeting_recordings').update({ ai_status: 'skipped', ai_error: g.error }).eq('id', id)
+    return
+  }
+  let gfile: { name: string; uri: string; mimeType?: string } | null = null
+  try {
+    let transcript = String(r.transcript ?? '').trim()
+    let summary = ''
+    let inTok = 0
+    let outTok = 0
+    if (transcript) {
+      const res = await geminiJson(g, [{ text: SUMMARY_PROMPT + transcript.slice(0, 600_000) }], { summary: { type: 'STRING' } })
+      summary = String(res.out.summary ?? '')
+      inTok = res.inTok
+      outTok = res.outTok
+    } else {
+      const path = String(r.audio_path || r.video_path || '')
+      if (!path) {
+        await admin.from('meeting_recordings').update({ ai_status: 'skipped', ai_error: 'No recording file to read (a link only).' }).eq('id', id)
+        return
+      }
+      const size = Number((r.audio_path ? r.audio_size : r.video_size) ?? 0)
+      const gf = await toGemini(g.key, path, size, mimeOf(path))
+      gfile = gf
+      const res = await geminiJson(g, [{ file_data: { mime_type: gf.mimeType ?? mimeOf(path), file_uri: gf.uri } }, { text: REC_PROMPT }], { transcript: { type: 'STRING' }, summary: { type: 'STRING' } })
+      transcript = String(res.out.transcript ?? '')
+      summary = String(res.out.summary ?? '')
+      inTok = res.inTok
+      outTok = res.outTok
+    }
+    await admin.from('ai_usage').insert({ tenant_id: r.tenant_id, integration_id: g.id, model: g.model, feature: 'meeting_summary', input_tokens: inTok, output_tokens: outTok, member_id: null })
+    await admin.from('meeting_recordings').update({ transcript: transcript || null, summary: summary || null, ai_status: 'done', ai_error: null, ai_at: new Date().toISOString() }).eq('id', id)
+    // the summary as a note on the meeting's lead (once)
+    if (summary && r.meeting_id && !r.note_added) {
+      const { data: m } = await admin.from('meetings').select('lead_id, meeting_date, kind').eq('id', r.meeting_id).maybeSingle()
+      if (m?.lead_id && m.kind !== 'team') {
+        const day = new Date(`${m.meeting_date}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+        await admin.from('lead_activities').insert({ tenant_id: r.tenant_id, lead_id: m.lead_id, kind: 'note', note: `Meeting summary (${day}, from the recording)\n\n${summary}` })
+        await admin.from('meeting_recordings').update({ note_added: true }).eq('id', id)
+      }
+    }
+  } catch (e) {
+    const tries = Number(r.ai_tries) + 1
+    await admin.from('meeting_recordings').update({ ai_tries: tries, ai_error: (e as Error).message.slice(0, 300), ai_status: tries >= 3 ? 'error' : 'waiting' }).eq('id', id)
+  } finally {
+    if (gfile?.name) await fetch(`https://generativelanguage.googleapis.com/v1beta/${gfile.name}`, { method: 'DELETE', headers: { 'x-goog-api-key': g.key } }).catch(() => null)
+  }
 }
 
 // ---------------- handler ----------------
@@ -540,6 +832,34 @@ Deno.serve(async (req) => {
         }
       }
       return json({ done })
+    }
+    if (action === 'rec_find') {
+      const { data: due } = await admin.rpc('recording_due', { p_limit: 10 })
+      const done = []
+      for (const d of (due ?? []) as { kind: 'meeting' | 'event'; id: string }[]) {
+        try {
+          done.push({ ...d, ...(await findRecording(admin, d.kind, d.id)) })
+        } catch (e) {
+          done.push({ ...d, error: (e as Error).message })
+        }
+      }
+      return json({ done })
+    }
+    if (action === 'rec_work') {
+      // up to ~4.5 minutes: claim a recording, work on it, let it go, next
+      const deadline = Date.now() + 270_000
+      let n = 0
+      while (Date.now() < deadline - 60_000) {
+        const { data: id } = await admin.rpc('recording_claim')
+        if (!id) break
+        try {
+          await workRecording(admin, String(id), deadline)
+        } finally {
+          await admin.from('meeting_recordings').update({ lease_until: null }).eq('id', String(id))
+        }
+        n++
+      }
+      return json({ worked: n })
     }
     if (action === 'book_meeting') {
       const { data: m } = await admin.from('meetings').select('*, lead:leads(first_name, last_name)').eq('id', String(b.meeting_id)).maybeSingle()
@@ -625,6 +945,14 @@ Deno.serve(async (req) => {
       await admin.from('integrations').update({ status: 'error', last_error: (e as Error).message }).eq('id', acc.id)
       return fail((e as Error).message)
     }
+  }
+
+  if (action === 'rec_ai') {
+    // the caller must be able to see the recording; it's queued (the worker runs every minute)
+    const { data: seen } = await asCaller.from('meeting_recordings').select('id').eq('id', String(b.id)).maybeSingle()
+    if (!seen) return fail('Not found.', 404)
+    await admin.from('meeting_recordings').update({ ai_status: 'waiting', ai_tries: 0, ai_error: null, ...(b.copy ? { copy_status: 'waiting', copy_tries: 0, copy_error: null } : {}) }).eq('id', String(b.id))
+    return json({ ok: true })
   }
 
   if (action === 'pull' || action === 'sync') {
