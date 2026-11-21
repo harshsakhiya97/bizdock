@@ -15,11 +15,15 @@ export const releases: Release[] = [
   {
     version: '0.30',
     date: '2026-11-21',
-    title: 'Workspace look, menu and words',
-    summary: 'Migrations 20261121123000_tenant_sidebar_style, 20261121124500_tenant_hide_bizdock_branding, 20261121130000_tenant_hidden_pages, 20261121131500_tenant_extra_pages_labels.',
+    title: 'Workspace look, menu and words; course business; big workspaces',
+    summary: 'Migrations 20261121123000 … 20261121173000 (sidebar style, branding, hidden / extra pages, labels, course refunds & expenses, course_dashboard, import_put, list_leads / list_leads_lite / list_purchases / lead_tag_field_names / lead_list_extras_v2, lead_stats).',
     new: [
       'tenants: sidebar_style (light / dark), hide_bizdock_branding, hidden_pages (menu pages turned off, with what is under them), extra_pages (opt-in pages, e.g. /enrolled-courses) and labels (words shown differently, e.g. {"Product": "Course"}).',
       'resolve_tenant_v2: resolve_tenant plus those settings; the client app uses it. resolve_tenant is unchanged, so older builds keep working.',
+      'purchases: refund_amount, refund_reason, refunded_on. New table expenses (date, category, amount, business; module expenses).',
+      'course_dashboard(tenant, business, from, to): the course dashboard in one call (access checked once).',
+      'Big workspaces: list_leads, list_leads_lite, list_purchases (paged), lead_list_extras_v2, lead_stats and lead_tag_field_names apply the same access rules as the tables but check the caller once per call (the row-by-row checks timed out at 22,000 leads). The tables’ own policies are unchanged.',
+      'import_put(token, kind, rows): one-time imports land in private.import_rows with a short-lived token.',
     ],
   },
   {
