@@ -98,7 +98,7 @@ async function transcribe(admin: SupabaseClient, cache: Map<string, Gem>, id: st
       output_tokens: Number(u.candidatesTokenCount ?? 0) + Number(u.thoughtsTokenCount ?? 0),
       member_id: null,
     })
-    await admin.from('calls').update({ transcript: transcript || '(no conversation)', transcript_status: 'done', transcript_error: null, transcript_at: new Date().toISOString(), transcript_lease: null }).eq('id', id)
+    await admin.from('calls').update({ transcript: transcript || '(no conversation)', transcript_status: 'done', transcript_error: null, transcript_at: new Date().toISOString(), transcript_lease: null, transcript_redo: false }).eq('id', id)
     return transcript
   } catch (e) {
     if (e instanceof RateLimited) {
