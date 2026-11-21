@@ -13,6 +13,16 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.31',
+    date: '2026-11-21',
+    title: 'Meeting recordings',
+    summary: 'Migration 20261121170000_meeting_recordings. Edge function zoom.',
+    new: [
+      'meeting_recordings (per meeting / webinar date: Zoom files, our copies video_path / audio_path, link_url, copy and AI status, transcript, summary; RLS like zoom_attendance; manual rows added / removed by members). Bucket meeting-recordings (private; read with meetings.view). meetings / events.rec_checked_at. recording_due(), recording_claim() (6-minute lease), private.kick_zoom_long; crons zoom-recordings-find (10 min) and zoom-recordings-work (every minute while something waits).',
+      'Edge function zoom: rec_find (Zoom recording list → a row), rec_work (streams MP4 / M4A from Zoom into storage, Zoom VTT as transcript; then Gemini Files API → transcript + summary, ai_usage feature meeting_summary, monthly limit; a note on the lead), rec_ai (again, from the app); pull also looks for the recording.',
+    ],
+  },
+  {
     version: '0.30',
     date: '2026-11-21',
     title: 'Workspace look, menu and words; course business; big workspaces',
