@@ -18,7 +18,7 @@ const RUN_MS = 45_000
 const BATCH = 5
 
 const PROMPT = `This is a recorded phone call in India between a business's team member and a customer or lead (it may be in Hindi, English or Hinglish).
-Return JSON with "transcript": the whole conversation, one line per turn, "Team: …" or "Customer: …" (use a person's name instead when it is said clearly). Write Hindi in Roman script (Hinglish), as spoken. If nobody speaks (ringing, voicemail, silence), write a short note in brackets, e.g. "(no conversation: voicemail)".`
+Return JSON with "transcript": the whole conversation, one turn per line (separate lines with a line break), each line starting with exactly "Team:" or "Customer:" (when a person's name is said clearly, add it in brackets: "Team (Alka):", "Customer (Rahul):"). Write Hindi in Roman script (Hinglish), as spoken. If nobody speaks (ringing, voicemail, silence), write a short note in brackets, e.g. "(no conversation: voicemail)".`
 
 type Gem = { id: string; key: string; model: string; priceIn: number; priceOut: number; limit: number } | { error: string }
 class RateLimited extends Error {}
