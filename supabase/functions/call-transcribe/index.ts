@@ -58,7 +58,7 @@ function b64(bytes: Uint8Array) {
 
 /** one call: its recording → Gemini → transcript saved */
 async function transcribe(admin: SupabaseClient, cache: Map<string, Gem>, id: string): Promise<string> {
-  const { data: c } = await admin.from('calls').select('id, tenant_id, recording_path, transcript_tries').eq('id', id).maybeSingle()
+  const { data: c } = await admin.from('calls').select('id, tenant_id, recording_path, transcript_tries, direction, emp_name, client_name, lead_id, phone').eq('id', id).maybeSingle()
   if (!c?.recording_path) throw new Error('No recording copied yet.')
   const g = await geminiFor(admin, cache, c.tenant_id)
   if ('error' in g) {
@@ -74,7 +74,7 @@ async function transcribe(admin: SupabaseClient, cache: Map<string, Gem>, id: st
       method: 'POST',
       headers: { 'x-goog-api-key': g.key, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mimeOf(c.recording_path), data: b64(bytes) } }, { text: PROMPT }] }],
+        contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mimeOf(c.recording_path), data: b64(bytes) } }, { text: PROMPT + (await who(admin, c)) }] }],
         generationConfig: { temperature: 0.2, maxOutputTokens: 16000, responseMimeType: 'application/json', responseSchema: { type: 'OBJECT', properties: { transcript: { type: 'STRING' } }, required: ['transcript'] } },
       }),
     })
@@ -109,6 +109,29 @@ async function transcribe(admin: SupabaseClient, cache: Map<string, Gem>, id: st
     await admin.from('calls').update({ transcript_tries: tries, transcript_error: (e as Error).message.slice(0, 300), transcript_status: tries >= 3 ? 'error' : 'waiting', transcript_lease: null }).eq('id', id)
     throw e
   }
+}
+
+
+/** who is who on the call (so the team member isn't written as the customer) */
+async function who(admin: SupabaseClient, c: { tenant_id: string; direction: string | null; emp_name: string | null; client_name: string | null; lead_id: string | null; phone: string | null }) {
+  let lead = ''
+  if (c.lead_id) {
+    const { data } = await admin.from('leads').select('first_name, last_name').eq('id', c.lead_id).maybeSingle()
+    lead = [data?.first_name, data?.last_name].filter(Boolean).join(' ')
+  } else if (c.phone) {
+    const { data } = await admin.from('leads').select('first_name, last_name, phone').eq('tenant_id', c.tenant_id).ilike('phone', `%${c.phone.slice(-10)}`).limit(1).maybeSingle()
+    lead = [data?.first_name, data?.last_name].filter(Boolean).join(' ')
+  }
+  const team = (c.emp_name ?? '').trim()
+  const customer = (lead || c.client_name || '').trim()
+  const dir = c.direction === 'outgoing' ? 'The team member called the customer (outgoing call): the first "Hello" is usually the customer picking up, and the person who introduces themself and the business ("main … bol rahi hu", "… se baat kar rahe hain") is the team member.' : c.direction === 'incoming' ? 'The customer called the business (incoming call): the team member usually answers first.' : ''
+  return `
+
+WHO IS WHO (use this to label the speakers correctly):
+- Team = ${team ? `the business's team member${team ? `, ${team}` : ''}` : 'the business’s team member'}: the one who speaks for the business, introduces themself or the business, explains the offer, books meetings, follows up.
+- Customer = ${customer ? `the lead, ${customer}` : 'the lead'}: the one being called about their enquiry or interest.
+${dir}
+If someone says "main ${team || 'X'} bol rahi/raha hu" they are Team.`
 }
 
 Deno.serve(async (req) => {
