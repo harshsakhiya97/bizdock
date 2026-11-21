@@ -20,7 +20,8 @@ pp as (
 e as (
   select x.amount, x.spent_on from public.expenses x where x.tenant_id = p_tenant and (p_business is null or x.business_id is null or x.business_id = p_business)
 ),
-first_buy as (select lead_id, min(purchase_date) as d from p where paid_amount > 0 group by lead_id),
+-- bought: a paid part, or a course recorded at ₹0 (imported sheets carry one total per person)
+first_buy as (select lead_id, min(purchase_date) as d from p where paid_amount > 0 or total_amount = 0 group by lead_id),
 months as (
   select generate_series(date_trunc('month', current_date) - interval '23 months', date_trunc('month', current_date), interval '1 month')::date as m
 ),
