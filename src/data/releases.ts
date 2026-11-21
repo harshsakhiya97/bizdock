@@ -13,6 +13,16 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.30',
+    date: '2026-11-21',
+    title: 'Workspace look, menu and words',
+    summary: 'Migrations 20261121123000_tenant_sidebar_style, 20261121124500_tenant_hide_bizdock_branding, 20261121130000_tenant_hidden_pages, 20261121131500_tenant_extra_pages_labels.',
+    new: [
+      'tenants: sidebar_style (light / dark), hide_bizdock_branding, hidden_pages (menu pages turned off, with what is under them), extra_pages (opt-in pages, e.g. /enrolled-courses) and labels (words shown differently, e.g. {"Product": "Course"}).',
+      'resolve_tenant_v2: resolve_tenant plus those settings; the client app uses it. resolve_tenant is unchanged, so older builds keep working.',
+    ],
+  },
+  {
     version: '0.29',
     date: '2026-11-20',
     title: 'AI Insights',
