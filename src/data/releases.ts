@@ -16,9 +16,10 @@ export const releases: Release[] = [
     version: '0.31',
     date: '2026-11-21',
     title: 'Meeting recordings',
-    summary: 'Migration 20261121170000_meeting_recordings. Edge function zoom.',
+    summary: 'Migrations 20261121170000_meeting_recordings, 20261121190000_call_transcripts. Edge functions zoom, call-transcribe.',
     new: [
       'meeting_recordings (per meeting / webinar date: Zoom files, our copies video_path / audio_path, link_url, copy and AI status, transcript, summary; RLS like zoom_attendance; manual rows added / removed by members). Bucket meeting-recordings (private; read with meetings.view). meetings / events.rec_checked_at. recording_due(), recording_claim() (6-minute lease), private.kick_zoom_long; crons zoom-recordings-find (10 min) and zoom-recordings-work (every minute while something waits).',
+      'calls: transcript_status / tries / error / at / lease; call_transcript_claim(); cron call-transcribe (every minute while some wait); callyzer_logs also returns transcript_status. Edge function call-transcribe: cron (5 at a time, ~45 s, Gemini inline audio, ai_usage feature call_transcript, monthly limit, stops on rate limit) and redo (Regenerate).',
       'Edge function zoom: rec_find (Zoom recording list → a row), rec_work (streams MP4 / M4A from Zoom into storage, Zoom VTT as transcript; then Gemini Files API → transcript + summary, ai_usage feature meeting_summary, monthly limit; a note on the lead), rec_ai (again, from the app); pull also looks for the recording.',
     ],
   },
