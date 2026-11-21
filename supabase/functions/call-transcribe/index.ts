@@ -2,8 +2,8 @@
 // the workspace's key (System Connections → Gemini AI), counted in ai_usage (feature call_transcript), stopped by its
 // monthly ₹ limit. Newest calls first, then the backlog.
 //
-//   POST { action: 'cron' } + header x-cron-secret (public.workflow_cron_secret())
-//     → for ~45 s: claims 5 calls at a time (call_transcript_claim) and transcribes them side by side.
+//   POST { action: 'cron', max? } + header x-cron-secret (public.workflow_cron_secret())
+//     → for ~45 s, up to max calls (default 50; the hourly cron sends 15): claims 5 calls at a time (call_transcript_claim) and transcribes them side by side.
 //       A failure is tried again on later runs (3 tries); Gemini's rate limit just ends the run (no try counted).
 //   POST { action: 'redo', id } (from the app, logged in) → that call again, now → { transcript }
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
@@ -148,8 +148,10 @@ Deno.serve(async (req) => {
     let done = 0
     let failed = 0
     let stop = ''
-    while (Date.now() - started < RUN_MS && !stop) {
-      const { data: ids } = await admin.rpc('call_transcript_claim', { p_limit: BATCH })
+    // at most this many calls per run (the hourly cron sends a small number: a little at a time)
+    const max = Math.max(1, Math.min(200, Number(b.max) || 50))
+    while (Date.now() - started < RUN_MS && !stop && done + failed < max) {
+      const { data: ids } = await admin.rpc('call_transcript_claim', { p_limit: Math.min(BATCH, max - done - failed) })
       const list = ((ids ?? []) as unknown[]).map((x) => String(typeof x === 'object' && x ? Object.values(x)[0] : x))
       if (!list.length) break
       const res = await Promise.allSettled(list.map((id) => transcribe(admin, cache, id)))
