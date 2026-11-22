@@ -12,7 +12,7 @@ language sql volatile security definer set search_path = '' as $$
       and ((transcript_status is null or transcript_status = 'waiting') or (transcript_status = 'done' and transcript_redo and transcript_at < timestamptz '2026-11-21 15:00:00+00'))
       and transcript_tries < 3
       and (transcript_lease is null or transcript_lease < now())
-    order by (transcript_status = 'done'), started_at desc
+    order by coalesce(transcript_status = 'done', false), started_at desc
     limit p_limit
     for update skip locked
   )
