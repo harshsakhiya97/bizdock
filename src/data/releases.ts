@@ -13,6 +13,18 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.32',
+    date: '2026-11-23',
+    title: 'Claude API, Sync transcripts',
+    summary: 'Migrations 20261121203000_call_transcribe_hourly, 20261121204000_call_transcript_redo, 20261123093000_call_transcribe_stop, 20261123100000_claude_transcripts. Edge functions claude (new), call-transcribe, gemini, zoom.',
+    new: [
+      'integrations provider claude; Tenants → Other connections: Claude API. Edge function claude: models / test.',
+      'transcript_syncs (a workspace’s Sync transcripts run); calls.transcript_redo; call_transcript_claim(p_limit, p_mode auto / write / relabel, p_tenant); transcript_sync_status(), transcript_sync_set(); cron call-transcribe every minute while a new call waits or a sync is on.',
+      'call-transcribe: new calls (last 3 days) automatically; sync = Claude fixes old transcripts’ speaker labels (ai_usage feature call_relabel) + Gemini writes the missing ones; the prompt tells Gemini who is who (team member, lead, direction).',
+    ],
+    fixed: ['Gemini’s monthly ₹ limit counts only Gemini usage (gemini, zoom, call-transcribe).'],
+  },
+  {
     version: '0.31',
     date: '2026-11-21',
     title: 'Meeting recordings',
