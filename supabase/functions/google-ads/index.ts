@@ -12,6 +12,17 @@
 // Spend is saved without GST, in the account's currency (cost_micros ÷ 1,000,000).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
+// deno-lint-ignore no-explicit-any
+type Db = SupabaseClient<any, any, any>
+/** a connection the caller may manage (row security: System Connections), read with its keys by the server (the browser can't read keys) */
+// deno-lint-ignore no-explicit-any
+async function ownRow(asCaller: Db, admin: Db, id: string, provider: string, cols: string): Promise<{ data: any }> {
+  const { data: ok } = await asCaller.from('integrations').select('id').eq('id', id).eq('provider', provider).maybeSingle()
+  if (!ok) return { data: null }
+  const { data } = await admin.from('integrations').select(cols).eq('id', (ok as { id: string }).id).maybeSingle()
+  return { data }
+}
+
 const V = 'v26'
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -338,7 +349,7 @@ Deno.serve(async (req) => {
 
   if (b.action === 'test') {
     // only people who can read the keys (System Connections)
-    const { data: r } = await asCaller.from('integrations').select('id, tenant_id, config').eq('id', String(b.id ?? '')).eq('provider', 'google_ads').maybeSingle()
+    const { data: r } = await ownRow(asCaller, admin, String(b.id ?? ''), 'google_ads', 'id, tenant_id, config')
     if (!r) return json({ error: 'Connection not found.' }, 404)
     try {
       const res = await discover(admin, r as { id: string; tenant_id: string; config: Cfg })

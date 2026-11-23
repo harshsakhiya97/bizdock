@@ -9,6 +9,17 @@
 // Keys never reach the browser. Amounts are saved in ₹ (Razorpay sends paise).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
+// deno-lint-ignore no-explicit-any
+type Db = SupabaseClient<any, any, any>
+/** a connection the caller may manage (row security: System Connections), read with its keys by the server (the browser can't read keys) */
+// deno-lint-ignore no-explicit-any
+async function ownRow(asCaller: Db, admin: Db, id: string, provider: string, cols: string): Promise<{ data: any }> {
+  const { data: ok } = await asCaller.from('integrations').select('id').eq('id', id).eq('provider', provider).maybeSingle()
+  if (!ok) return { data: null }
+  const { data } = await admin.from('integrations').select(cols).eq('id', (ok as { id: string }).id).maybeSingle()
+  return { data }
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
@@ -135,7 +146,7 @@ Deno.serve(async (req) => {
 
   if (b.action === 'test') {
     // only people who can read the keys (System Connections)
-    const { data: r } = await asCaller.from('integrations').select('id, tenant_id, config, is_enabled').eq('id', String(b.id ?? '')).eq('provider', 'razorpay').maybeSingle()
+    const { data: r } = await ownRow(asCaller, admin, String(b.id ?? ''), 'razorpay', 'id, tenant_id, config, is_enabled')
     if (!r) return fail('Account not found.', 404)
     try {
       await rz(r as Row, '/payments?count=1')
