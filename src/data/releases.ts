@@ -13,6 +13,18 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.33',
+    date: '2026-11-23',
+    title: 'Masked keys, Callyzer Report, Team Report',
+    summary: 'Migrations 20261123110000_integration_keys_masked, 20261123110100_integration_keys_no_read (after deploy), 20261123190000_team_report, 20261123200000_reports_split. Edge functions integration-key (new), claude, gemini, hellorix, razorpay, google-ads, zoom.',
+    new: [
+      'integrations_list(p_tenant): connections with keys masked (private.mask_config); trigger integrations_keep_keys keeps a saved key when a masked value is saved back. The browser can no longer read integrations.config.',
+      'Edge function integration-key: copy one saved key after the person’s password (System Connections access).',
+      'callyzer_day_report(p_tenant, p_day), team_report(p_tenant, p_day), team_report_list(p_tenant, p_day, p_member, p_kind); callyzer_team_calls_of also returns transcribed. Permission team_report.view.',
+    ],
+    improved: ['claude, gemini, hellorix, razorpay, google-ads, zoom read connection keys on the server (ownRow) after checking the caller can open the connection.'],
+  },
+  {
     version: '0.32',
     date: '2026-11-23',
     title: 'Claude API, Sync transcripts',
