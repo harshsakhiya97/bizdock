@@ -2,9 +2,13 @@
 // the workspace's key (System Connections → Gemini AI), counted in ai_usage (feature call_transcript), stopped by its
 // monthly ₹ limit. Newest calls first, then the backlog.
 //
-//   POST { action: 'cron', max? } + header x-cron-secret (public.workflow_cron_secret())
-//     → for ~45 s, up to max calls (default 50; the hourly cron sends 15): claims 5 calls at a time (call_transcript_claim) and transcribes them side by side.
-//       A failure is tried again on later runs (3 tries); Gemini's rate limit just ends the run (no try counted).
+//   POST { action: 'cron' } + header x-cron-secret (public.workflow_cron_secret()), every minute while needed, ~45 s:
+//     1. new calls (last 3 days) with no transcript → Gemini, up to 15 a run (call_transcript_claim 'auto')
+//     2. each workspace with Sync transcripts on (transcript_syncs.active, Callyzer → History logs):
+//        - old transcripts (written before 21 Nov 15:00 UTC) → Claude fixes the Team / Customer labels ('relabel')
+//        - every call with no transcript → Gemini ('write')
+//        and the sync ends itself when nothing is left (or only what its engines can't do).
+//     A failure is tried again on later runs (3 tries); a rate limit just ends that part of the run (no try counted).
 //   POST { action: 'redo', id } (from the app, logged in) → that call again, now → { transcript }
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -36,7 +40,7 @@ async function geminiFor(admin: SupabaseClient, cache: Map<string, Gem>, tenantI
   if (!('error' in g) && g.limit > 0) {
     const ist = new Date(Date.now() + 330 * 60_000)
     const start = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1) - 330 * 60_000).toISOString()
-    const { data } = await admin.from('ai_usage').select('input_tokens, output_tokens').eq('tenant_id', tenantId).gte('created_at', start).limit(200000)
+    const { data } = await admin.from('ai_usage').select('input_tokens, output_tokens').eq('tenant_id', tenantId).not('model', 'ilike', 'claude%').gte('created_at', start).limit(200000)
     const spent = ((data ?? []) as { input_tokens: number; output_tokens: number }[]).reduce((t, r) => t + Number(r.input_tokens) * g.priceIn + Number(r.output_tokens) * g.priceOut, 0) / 1e6
     if (spent >= g.limit) {
       const out = { error: `This month’s AI limit (₹${g.limit}) is used up.` }
@@ -134,6 +138,95 @@ ${dir}
 If someone says "main ${team || 'X'} bol rahi/raha hu" they are Team.`
 }
 
+// ---------------- Claude: fix the speaker labels of an old transcript ----------------
+type Cla = { id: string; key: string; model: string } | { error: string }
+async function claudeFor(admin: SupabaseClient, cache: Map<string, Cla>, tenantId: string): Promise<Cla> {
+  const hit = cache.get(tenantId)
+  if (hit) return hit
+  const { data: conn } = await admin.from('integrations').select('id, config').eq('tenant_id', tenantId).eq('provider', 'claude').eq('is_enabled', true).order('updated_at', { ascending: false }).limit(1).maybeSingle()
+  const cfg = (conn?.config ?? {}) as Record<string, string>
+  const key = String(cfg.api_key ?? '').trim()
+  const c: Cla = !conn || !key ? { error: 'Claude API is not connected.' } : { id: String(conn.id), key, model: String(cfg.model || 'claude-sonnet-4-5') }
+  cache.set(tenantId, c)
+  return c
+}
+
+const RELABEL = `Below is the transcript of a recorded phone call in India between a business's team member and a customer or lead (Hindi, English or Hinglish). It was written by a speech-to-text model that sometimes put the speakers the wrong way round, or ran several turns together on one line.
+Fix only the speaker labels and the line breaks:
+- One turn per line. Each line starts with exactly "Team:" or "Customer:"; when the person's name is known, add it in brackets: "Team (Alka):", "Customer (Rahul):".
+- Decide who is who from the conversation and the facts below (who introduces themself and the business, who explains the offer or books the meeting = Team).
+- Keep every word exactly as it is: don't translate, correct, shorten or add anything. Notes in brackets like [noise] stay where they are.
+- Reply with the fixed transcript only, nothing before or after it.`
+
+/** one old transcript → Claude → the same words with the right Team / Customer labels */
+async function relabel(admin: SupabaseClient, cache: Map<string, Cla>, id: string) {
+  const { data: c } = await admin.from('calls').select('id, tenant_id, transcript, transcript_tries, direction, emp_name, client_name, lead_id, phone').eq('id', id).maybeSingle()
+  if (!c?.transcript) throw new Error('No transcript to fix.')
+  const g = await claudeFor(admin, cache, c.tenant_id)
+  if ('error' in g) {
+    await admin.from('calls').update({ transcript_lease: null }).eq('id', id)
+    throw new Error(g.error)
+  }
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': g.key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: g.model,
+        max_tokens: 8000,
+        temperature: 0,
+        system: RELABEL,
+        messages: [{ role: 'user', content: `${(await who(admin, c)).trim()}\n\nTRANSCRIPT:\n${String(c.transcript).slice(0, 60000)}` }],
+      }),
+    })
+    const d = await r.json().catch(() => ({}))
+    if (r.status === 429 || r.status === 529) throw new RateLimited(d?.error?.message ?? 'Claude is busy')
+    if (!r.ok) throw new Error(d?.error?.message ? `Claude: ${d.error.message}` : `Claude error ${r.status}`)
+    const text = ((d?.content ?? []) as { type: string; text?: string }[]).filter((x) => x.type === 'text').map((x) => x.text ?? '').join('').trim()
+    if (!text || !/^(Team|Customer)\b/m.test(text)) throw new Error('Claude gave no usable transcript.')
+    await admin.from('ai_usage').insert({
+      tenant_id: c.tenant_id,
+      integration_id: g.id,
+      model: g.model,
+      feature: 'call_relabel',
+      input_tokens: Number(d?.usage?.input_tokens ?? 0),
+      output_tokens: Number(d?.usage?.output_tokens ?? 0),
+      member_id: null,
+    })
+    await admin.from('calls').update({ transcript: text, transcript_redo: false, transcript_error: null, transcript_at: new Date().toISOString(), transcript_lease: null }).eq('id', id)
+  } catch (e) {
+    if (e instanceof RateLimited) {
+      await admin.from('calls').update({ transcript_lease: null }).eq('id', id)
+      throw e
+    }
+    // the old transcript stays as it is; after 3 tries it's left alone
+    await admin.from('calls').update({ transcript_tries: Number(c.transcript_tries) + 1, transcript_error: (e as Error).message.slice(0, 300), transcript_lease: null }).eq('id', id)
+    throw e
+  }
+}
+
+/** claim and work through calls of one kind until the time, the count or a stop */
+async function work(admin: SupabaseClient, mode: 'auto' | 'write' | 'relabel', tenant: string | null, max: number, until: number, fn: (id: string) => Promise<unknown>) {
+  let done = 0
+  let failed = 0
+  let stop = ''
+  while (Date.now() < until && !stop && done + failed < max) {
+    const { data: ids } = await admin.rpc('call_transcript_claim', { p_limit: Math.min(BATCH, max - done - failed), p_mode: mode, p_tenant: tenant })
+    const list = ((ids ?? []) as unknown[]).map((x) => String(typeof x === 'object' && x ? Object.values(x)[0] : x))
+    if (!list.length) break
+    const res = await Promise.allSettled(list.map((id) => fn(id)))
+    for (const r of res) {
+      if (r.status === 'fulfilled') done++
+      else {
+        failed++
+        if (r.reason instanceof RateLimited) stop = 'rate limit'
+        else if (/AI limit|not connected/.test(String(r.reason?.message))) stop = String(r.reason.message)
+      }
+    }
+  }
+  return { done, failed, stop: stop || null }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'Use POST' }, 405)
@@ -144,27 +237,46 @@ Deno.serve(async (req) => {
   if (b.action === 'cron') {
     const { data: secret } = await admin.rpc('workflow_cron_secret')
     if (!secret || req.headers.get('x-cron-secret') !== secret) return json({ error: 'Not allowed' }, 401)
-    const started = Date.now()
-    let done = 0
-    let failed = 0
-    let stop = ''
-    // at most this many calls per run (the hourly cron sends a small number: a little at a time)
-    const max = Math.max(1, Math.min(200, Number(b.max) || 50))
-    while (Date.now() - started < RUN_MS && !stop && done + failed < max) {
-      const { data: ids } = await admin.rpc('call_transcript_claim', { p_limit: Math.min(BATCH, max - done - failed) })
-      const list = ((ids ?? []) as unknown[]).map((x) => String(typeof x === 'object' && x ? Object.values(x)[0] : x))
-      if (!list.length) break
-      const res = await Promise.allSettled(list.map((id) => transcribe(admin, cache, id)))
-      for (const r of res) {
-        if (r.status === 'fulfilled') done++
-        else {
-          failed++
-          if (r.reason instanceof RateLimited) stop = 'Gemini rate limit'
-          else if (/AI limit|not connected/.test(String(r.reason?.message))) stop = String(r.reason.message)
-        }
+    const until = Date.now() + RUN_MS
+    const cla = new Map<string, Cla>()
+    // 1. new calls: their transcript as they come in
+    const auto = await work(admin, 'auto', null, 15, until, (id) => transcribe(admin, cache, id))
+    // 2. Sync transcripts
+    const syncs: Record<string, unknown> = {}
+    const { data: on } = await admin.from('transcript_syncs').select('tenant_id').eq('active', true)
+    for (const s of (on ?? []) as { tenant_id: string }[]) {
+      const t = s.tenant_id
+      const cl = await claudeFor(admin, cla, t)
+      const claudeOn = !('error' in cl)
+      const fix = claudeOn ? await work(admin, 'relabel', t, 40, until, (id) => relabel(admin, cla, id)) : { done: 0, failed: 0, stop: 'Claude API not connected' }
+      const write = await work(admin, 'write', t, 15, until, (id) => transcribe(admin, cache, id))
+      syncs[t] = { fix, write }
+      // finished: nothing left that its engines can do
+      const { count: relabelLeft } = await admin
+        .from('calls')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', t)
+        .eq('source', 'callyzer')
+        .eq('transcript_status', 'done')
+        .eq('transcript_redo', true)
+        .lt('transcript_at', '2026-11-21T15:00:00Z')
+        .lt('transcript_tries', 3)
+        .not('recording_path', 'is', null)
+        .gte('duration_sec', 5)
+      const { count: writeLeft } = await admin
+        .from('calls')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', t)
+        .eq('source', 'callyzer')
+        .or('transcript_status.is.null,transcript_status.eq.waiting')
+        .lt('transcript_tries', 3)
+        .not('recording_path', 'is', null)
+        .gte('duration_sec', 5)
+      if ((!claudeOn || !relabelLeft) && !writeLeft) {
+        await admin.from('transcript_syncs').update({ active: false, finished_at: new Date().toISOString(), note: claudeOn || !relabelLeft ? 'Done' : 'Done (Claude API not connected: old transcripts not fixed)' }).eq('tenant_id', t)
       }
     }
-    return json({ ok: true, done, failed, stop: stop || null })
+    return json({ ok: true, auto, syncs })
   }
 
   if (b.action === 'redo') {

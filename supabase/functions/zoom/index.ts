@@ -625,7 +625,7 @@ async function geminiFor(admin: SupabaseClient, tenantId: string) {
   if (limit > 0) {
     const ist = new Date(Date.now() + 330 * 60_000)
     const start = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1) - 330 * 60_000).toISOString()
-    const { data } = await admin.from('ai_usage').select('input_tokens, output_tokens').eq('tenant_id', tenantId).gte('created_at', start).limit(100000)
+    const { data } = await admin.from('ai_usage').select('input_tokens, output_tokens').eq('tenant_id', tenantId).not('model', 'ilike', 'claude%').gte('created_at', start).limit(100000)
     const rows = (data ?? []) as { input_tokens: number; output_tokens: number }[]
     const spent = rows.reduce((t, r) => t + Number(r.input_tokens) * Number(cfg.price_in || 0) + Number(r.output_tokens) * Number(cfg.price_out || 0), 0) / 1e6
     if (spent >= limit) return { error: `This month’s AI limit (₹${limit}) is used up.` }

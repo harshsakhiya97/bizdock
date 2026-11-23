@@ -60,7 +60,7 @@ function pickDefault(models: Model[]) {
 async function monthSpend(admin: any, tenantId: string, cfg: Record<string, string>) {
   const ist = new Date(Date.now() + 330 * 60_000)
   const start = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1) - 330 * 60_000).toISOString()
-  const { data } = await admin.from('ai_usage').select('input_tokens, output_tokens').eq('tenant_id', tenantId).gte('created_at', start).limit(100000)
+  const { data } = await admin.from('ai_usage').select('input_tokens, output_tokens').eq('tenant_id', tenantId).not('model', 'ilike', 'claude%').gte('created_at', start).limit(100000)
   const rows = (data ?? []) as { input_tokens: number; output_tokens: number }[]
   const inp = rows.reduce((t, r) => t + Number(r.input_tokens), 0)
   const out = rows.reduce((t, r) => t + Number(r.output_tokens), 0)
