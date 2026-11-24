@@ -10,11 +10,10 @@
 //     A failure is tried again on later runs (3 tries); a rate limit just ends that part of the run.
 //   POST { action: 'refresh', lead_id } (from the app, logged in) → that lead now → { content, generated_at }
 //
-// Settings (System Connections): Gemini AI → Prompt & steps → Lead AI Insights — on / off (li_on), the prompt (li_prompt,
-// empty = the default below), "If Gemini fails, use Claude" (li_fallback) and when (li_when: busy, error, bad_answer,
-// not_connected). Claude API → Prompt & steps → the model for lead summaries (li_model, default: the cheapest Haiku).
-// Gemini busy (429 / 503) is tried once more after 2.5 s before Claude. Claude's cost counts in the same monthly ₹ limit.
+// Which AI writes it: System Connections → AI order → Lead AI Insights (Level 1, 2, 3; on / off; the prompt, empty =
+// the default below). The monthly ₹ limit counts every AI.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
+import { AiBusy, aiAsk, aiRoute, logUsage, type Route } from '../_shared/ai.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -25,84 +24,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const RUN_MS = 45_000
 const BATCH = 5
 
-type Gem = { id: string; key: string; model: string } | null
-type Cla = { id: string; key: string; model: string } | null
-type Ai = {
-  on: boolean
-  gemini: Gem
-  claude: Cla
-  prompt: string | null
-  fallback: boolean
-  when: Set<string>
-  /** this month's estimated AI spend reached the limit */
-  limitHit: string | null
-}
 class RateLimited extends Error {}
-/** why Gemini failed: busy (rate limit / overloaded), error (server error / timeout), bad_answer, not_connected */
-class GemFail extends Error {
-  constructor(public kind: 'busy' | 'error' | 'bad_answer' | 'not_connected', msg: string) {
-    super(msg)
-  }
-}
-const ALL_WHEN = ['busy', 'error', 'bad_answer', 'not_connected']
-const USD = 88
-/** Claude's price per 1M tokens in ₹ (config price_in / price_out, else Anthropic's list price by model family) */
-function claudePrice(cfg: Record<string, string>, model: string) {
-  const fam = /opus/i.test(model) ? [15, 75] : /sonnet/i.test(model) ? [3, 15] : [1, 5]
-  return { pin: Number(cfg.price_in || fam[0] * USD), pout: Number(cfg.price_out || fam[1] * USD) }
-}
-
-/** the workspace's AI for lead summaries: Gemini, Claude (fallback), the settings and the month's limit (cached for the run) */
-async function aiFor(admin: SupabaseClient, cache: Map<string, Ai>, tenantId: string): Promise<Ai> {
-  const hit = cache.get(tenantId)
-  if (hit) return hit
-  const row = async (provider: string) =>
-    (await admin.from('integrations').select('id, config').eq('tenant_id', tenantId).eq('provider', provider).eq('is_enabled', true).order('updated_at', { ascending: false }).limit(1).maybeSingle()).data
-  const [g, c] = await Promise.all([row('gemini'), row('claude')])
-  const gc = (g?.config ?? {}) as Record<string, string>
-  const cc = (c?.config ?? {}) as Record<string, string>
-  const gKey = String(gc.api_key ?? '').trim()
-  const cKey = String(cc.api_key ?? '').trim()
-  let cModel = String(cc.li_model || '').trim()
-  if (!cModel) {
-    try {
-      const list = JSON.parse(cc.models || '[]') as { id: string }[]
-      cModel = list.find((m) => /haiku/i.test(m.id))?.id ?? ''
-    } catch {
-      /* no list */
-    }
-    cModel = cModel || String(cc.model || 'claude-haiku-4-5')
-  }
-  const ai: Ai = {
-    on: gc.li_on !== 'off',
-    gemini: g && gKey ? { id: String(g.id), key: gKey, model: String(gc.model || 'gemini-flash-latest') } : null,
-    claude: c && cKey ? { id: String(c.id), key: cKey, model: cModel } : null,
-    prompt: String(gc.li_prompt ?? '').trim() || null,
-    fallback: gc.li_fallback !== 'off',
-    when: new Set(gc.li_when ? gc.li_when.split(',').map((x) => x.trim()).filter(Boolean) : ALL_WHEN),
-    limitHit: null,
-  }
-  // the monthly ₹ limit (Gemini AI → Keys): Gemini at its prices + Claude at Claude's
-  const limit = Number(gc.monthly_limit || 0)
-  if (limit > 0) {
-    const ist = new Date(Date.now() + 330 * 60_000)
-    const start = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1) - 330 * 60_000).toISOString()
-    const { data } = await admin.from('ai_usage').select('model, input_tokens, output_tokens').eq('tenant_id', tenantId).gte('created_at', start).limit(200000)
-    const gin = Number(gc.price_in || 0)
-    const gout = Number(gc.price_out || 0)
-    const spent =
-      ((data ?? []) as { model: string; input_tokens: number; output_tokens: number }[]).reduce((t, r) => {
-        if (/^claude/i.test(r.model ?? '')) {
-          const p = claudePrice(cc, r.model)
-          return t + Number(r.input_tokens) * p.pin + Number(r.output_tokens) * p.pout
-        }
-        return t + Number(r.input_tokens) * gin + Number(r.output_tokens) * gout
-      }, 0) / 1e6
-    if (spent >= limit) ai.limitHit = `This month’s AI limit (₹${limit}) is used up.`
-  }
-  cache.set(tenantId, ai)
-  return ai
-}
 
 const PROMPT = `You are a sales assistant for an Indian business. Below is everything the CRM knows about one lead (a possible customer): the lead's details, follow-up calls and their comments, notes, phone call transcripts (Hindi / English / Hinglish), meetings, bookings and payments, and WhatsApp messages. The lead's name, phone numbers and emails are hidden ("the lead", [phone], [email]).
 
@@ -256,129 +178,48 @@ async function gather(admin: SupabaseClient, leadId: string) {
   return { tenantId: t, text: L.join('\n') }
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-type Out = { content: Record<string, unknown>; model: string; integrationId: string; inTok: number; outTok: number }
+const JSON_SHAPE = `{"summary": string, "interest": {"level": "hot" | "warm" | "cold", "why": string}, "needs": string, "budget": string, "timeline": string, "objections": string[], "next_action": string, "risks": string[]}`
 
-/** Gemini, once more after 2.5 s when it's busy */
-async function askGemini(g: NonNullable<Gem>, prompt: string, text: string): Promise<Out> {
-  for (let attempt = 0; ; attempt++) {
-    let r: Response
-    try {
-      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(g.model)}:generateContent`, {
-        method: 'POST',
-        headers: { 'x-goog-api-key': g.key, 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(40_000),
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: prompt }] },
-          contents: [{ role: 'user', parts: [{ text }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 4000, responseMimeType: 'application/json', responseSchema: SCHEMA },
-        }),
-      })
-    } catch (e) {
-      throw new GemFail('error', `Gemini didn’t answer (${(e as Error).name === 'TimeoutError' ? 'timeout' : (e as Error).message})`)
-    }
-    const d = await r.json().catch(() => ({}))
-    const msg = String(d?.error?.message ?? '')
-    const busy = r.status === 429 || r.status === 503 || /overloaded|high demand|try again later/i.test(msg)
-    if (busy && attempt === 0) {
-      await sleep(2500)
-      continue
-    }
-    if (busy) throw new GemFail('busy', msg ? `Gemini: ${msg}` : 'Gemini is busy.')
-    if (!r.ok) throw new GemFail('error', msg ? `Gemini: ${msg}` : `Gemini error ${r.status}`)
-    const out = ((d?.candidates?.[0]?.content?.parts ?? []) as { text?: string; thought?: boolean }[]).filter((p) => !p.thought).map((p) => p.text ?? '').join('')
-    let content: Record<string, unknown>
-    try {
-      content = JSON.parse(out)
-      if (!content?.summary) throw new Error('no summary')
-    } catch {
-      throw new GemFail('bad_answer', `Gemini gave no usable answer (${d?.candidates?.[0]?.finishReason ?? 'empty'})`)
-    }
-    const u = d?.usageMetadata ?? {}
-    return { content, model: g.model, integrationId: g.id, inTok: Number(u.promptTokenCount ?? 0), outTok: Number(u.candidatesTokenCount ?? 0) + Number(u.thoughtsTokenCount ?? 0) }
-  }
-}
-
-const CLAUDE_JSON = `
-
-Reply with one JSON object only (no text before or after it, no code fences), exactly these keys:
-{"summary": string, "interest": {"level": "hot" | "warm" | "cold", "why": string}, "needs": string, "budget": string, "timeline": string, "objections": string[], "next_action": string, "risks": string[]}`
-
-/** Claude (when Gemini fails) */
-async function askClaude(c: NonNullable<Cla>, prompt: string, text: string): Promise<Out> {
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': c.key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    signal: AbortSignal.timeout(60_000),
-    body: JSON.stringify({ model: c.model, max_tokens: 2000, temperature: 0.3, system: prompt + CLAUDE_JSON, messages: [{ role: 'user', content: text }] }),
-  })
-  const d = await r.json().catch(() => ({}))
-  if (r.status === 429 || r.status === 529) throw new RateLimited(d?.error?.message ?? 'Claude is busy')
-  if (!r.ok) throw new Error(d?.error?.message ? `Claude: ${d.error.message}` : `Claude error ${r.status}`)
-  const out = ((d?.content ?? []) as { type: string; text?: string }[]).filter((x) => x.type === 'text').map((x) => x.text ?? '').join('').trim()
-  let content: Record<string, unknown>
-  try {
-    const a = out.indexOf('{')
-    const b = out.lastIndexOf('}')
-    content = JSON.parse(out.slice(a, b + 1))
-    if (!content?.summary) throw new Error('no summary')
-  } catch {
-    throw new Error('Claude gave no usable answer.')
-  }
-  return { content, model: c.model, integrationId: c.id, inTok: Number(d?.usage?.input_tokens ?? 0), outTok: Number(d?.usage?.output_tokens ?? 0) }
-}
-
-/** one lead → Gemini (or Claude, if Gemini fails and that's turned on) → summary saved */
-async function summarize(admin: SupabaseClient, cache: Map<string, Ai>, leadId: string) {
+/** one lead → the AI order (System Connections → AI order → Lead AI Insights) → summary saved */
+async function summarize(admin: SupabaseClient, cache: Map<string, Route>, leadId: string) {
   const t0 = new Date().toISOString()
   const { data: row } = await admin.from('lead_insights').select('tries').eq('lead_id', leadId).maybeSingle()
   let tenantId = ''
   try {
     const { tenantId: t, text } = await gather(admin, leadId)
     tenantId = t
-    const ai = await aiFor(admin, cache, t)
-    if (!ai.on) throw new Error('Lead AI Insights are turned off (System Connections → Gemini AI → Prompt & steps).')
-    if (ai.limitHit) throw new Error(ai.limitHit)
-    const prompt = ai.prompt ?? PROMPT
-    let res: Out
-    try {
-      if (!ai.gemini) throw new GemFail('not_connected', 'Gemini AI is not connected.')
-      res = await askGemini(ai.gemini, prompt, text)
-    } catch (e) {
-      if (!(e instanceof GemFail)) throw e
-      if (!(ai.fallback && ai.claude && ai.when.has(e.kind))) throw e.kind === 'busy' ? new RateLimited(e.message) : e
-      res = await askClaude(ai.claude, prompt, text)
+    let route = cache.get(t)
+    if (!route) {
+      route = await aiRoute(admin, t, 'lead_insight')
+      cache.set(t, route)
     }
-    await admin.from('ai_usage').insert({
-      tenant_id: t,
-      integration_id: res.integrationId,
-      model: res.model,
-      feature: 'lead_insight',
-      input_tokens: res.inTok,
-      output_tokens: res.outTok,
-      member_id: null,
+    if (!route.enabled) throw new Error('Lead AI Insights are turned off (System Connections → AI order).')
+    if (route.limitHit) throw new Error(route.limitHit)
+    const res = await aiAsk(route, { system: route.prompt ?? PROMPT, messages: [{ role: 'user', text }], schema: SCHEMA, jsonShape: JSON_SHAPE, maxTokens: 4000 }, (o) => {
+      if (!o.json?.summary) throw new Error('no summary')
     })
-    const content = res.content
+    await logUsage(admin, t, res, 'lead_insight')
+    const content = res.json!
     const at = new Date().toISOString()
     await admin.from('lead_insights').upsert({ lead_id: leadId, tenant_id: t, content, model: res.model, generated_at: at, lease: null, tries: 0, error: null })
     // done — unless the lead changed again while this was being written
     await admin.from('lead_insights').update({ stale: false }).eq('lead_id', leadId).lte('stale_at', t0)
     return { content, generated_at: at }
   } catch (e) {
-    if (e instanceof RateLimited) {
+    if (e instanceof AiBusy) {
       await admin.from('lead_insights').update({ lease: null }).eq('lead_id', leadId)
-      throw e
+      throw new RateLimited(e.message)
     }
     const msg = (e as Error).message
     // no AI / limit used up / turned off: not the lead's fault, no try counted
-    const tries = Number(row?.tries ?? 0) + (/AI limit|not connected|turned off/.test(msg) ? 0 : 1)
+    const tries = Number(row?.tries ?? 0) + (/AI limit|not connected|turned off|No AI is set/.test(msg) ? 0 : 1)
     if (tenantId) await admin.from('lead_insights').update({ tries, error: msg.slice(0, 300), lease: null }).eq('lead_id', leadId)
     throw e
   }
 }
 
 /** claim and work through leads until the time, the count or a stop */
-async function work(admin: SupabaseClient, cache: Map<string, Ai>, mode: 'auto' | 'sync', tenant: string | null, max: number, until: number) {
+async function work(admin: SupabaseClient, cache: Map<string, Route>, mode: 'auto' | 'sync', tenant: string | null, max: number, until: number) {
   let done = 0
   let failed = 0
   let stop = ''
@@ -392,7 +233,7 @@ async function work(admin: SupabaseClient, cache: Map<string, Ai>, mode: 'auto' 
       else {
         failed++
         if (r.reason instanceof RateLimited) stop = 'rate limit'
-        else if (mode === 'sync' && /AI limit|not connected|turned off/.test(String(r.reason?.message))) stop = String(r.reason.message)
+        else if (mode === 'sync' && /AI limit|not connected|turned off|No AI is set/.test(String(r.reason?.message))) stop = String(r.reason.message)
       }
     }
   }
@@ -404,7 +245,7 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Use POST' }, 405)
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
   const b = await req.json().catch(() => ({}))
-  const cache = new Map<string, Ai>()
+  const cache = new Map<string, Route>()
 
   if (b.action === 'cron') {
     const { data: secret } = await admin.rpc('workflow_cron_secret')
@@ -417,8 +258,9 @@ Deno.serve(async (req) => {
     const { data: on } = await admin.from('lead_insight_syncs').select('tenant_id').eq('active', true)
     for (const s of (on ?? []) as { tenant_id: string }[]) {
       const t = s.tenant_id
-      const ai = await aiFor(admin, cache, t)
-      const why = !ai.on ? 'Lead AI Insights are turned off.' : ai.limitHit ?? (!ai.gemini && !(ai.fallback && ai.claude) ? 'Gemini AI is not connected.' : null)
+      const ai = await aiRoute(admin, t, 'lead_insight')
+      cache.set(t, ai)
+      const why = !ai.enabled ? 'Lead AI Insights are turned off.' : ai.limitHit ?? (!ai.levels.some((l) => l.key) ? 'No AI in its order is connected.' : null)
       if (why) {
         await admin.from('lead_insight_syncs').update({ active: false, finished_at: new Date().toISOString(), note: `Stopped: ${why}` }).eq('tenant_id', t)
         syncs[t] = { stop: why }

@@ -18,6 +18,7 @@
 //
 // The key never reaches the browser. Each call is kept in ai_calls with HelloRix's cost (₹).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
+import { AiBusy, aiAsk, aiRoute, logUsage } from '../_shared/ai.ts'
 
 // deno-lint-ignore no-explicit-any
 type Db = SupabaseClient<any, any, any>
@@ -387,10 +388,11 @@ async function webhook(req: Request, integrationId: string) {
 
 // ---------- Write with AI (Gemini) ----------
 async function draft(db: SupabaseClient, tenantId: string, b: Record<string, unknown>) {
-  const { data: g } = await db.from('integrations').select('config').eq('tenant_id', tenantId).eq('provider', 'gemini').eq('is_enabled', true).limit(1).maybeSingle()
-  const gk = String((g?.config as Cfg | undefined)?.api_key ?? '')
-  const model = String((g?.config as Cfg | undefined)?.model ?? 'gemini-flash-latest')
-  if (!gk) throw new Error('Connect Gemini AI in System Connections to write templates with AI.')
+  // the AI order (System Connections → AI order → Write with AI): Level 1, then the next when it fails
+  const route = await aiRoute(db, tenantId, 'ai_call_template')
+  if (!route.enabled) throw new Error('Write with AI is turned off (System Connections → AI order).')
+  if (!route.levels.some((l) => l.key)) throw new Error('Connect Gemini AI (or the AI set in System Connections → AI order) to write templates with AI.')
+  if (route.limitHit) throw new Error(route.limitHit)
   const lang = b.language === 'Hinglish' ? 'Hinglish (Hindi words in English/Latin letters, never Devanagari)' : 'simple English'
   const goal = String(b.goal ?? '').trim().slice(0, 1000)
   const biz = String(b.business ?? '').trim().slice(0, 200) || 'our business'
@@ -404,20 +406,12 @@ Reply only with JSON: {"name","purpose","ask","collect":[{"field","type","requir
 - if_they_push_back: how to handle price / "send details" / "busy". Never quote a price; say the team will share exact details.
 - closing and give_up: short.
 ${goal ? `The goal of the call: ${goal}` : ''}`
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': gk },
-    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.5, responseMimeType: 'application/json' } }),
-  })
-  const d = await r.json().catch(() => ({}))
-  if (!r.ok) throw new Error(d?.error?.message ?? `Gemini error ${r.status}`)
-  const text = d?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('') ?? ''
-  const u = d?.usageMetadata ?? {}
-  await db.from('ai_usage').insert({ tenant_id: tenantId, model, feature: 'ai_call_template', input_tokens: u.promptTokenCount ?? 0, output_tokens: u.candidatesTokenCount ?? 0 })
   try {
-    return JSON.parse(text.replace(/^```(json)?|```$/g, '').trim())
-  } catch {
-    throw new Error('Gemini’s reply could not be read. Try again.')
+    const o = await aiAsk(route, { system: 'You write phone-call scripts for AI voice agents. Follow the instructions exactly.', messages: [{ role: 'user', text: prompt }], jsonShape: '{"name","purpose","ask","collect":[{"field","type","required","options","how_to_ask"}],"if_they_push_back","closing","give_up"}', temperature: 0.5 })
+    await logUsage(db, tenantId, o, 'ai_call_template')
+    return o.json
+  } catch (e) {
+    throw new Error(e instanceof AiBusy ? 'The AI is busy right now. Try again in a minute.' : (e as Error).message)
   }
 }
 
