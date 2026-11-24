@@ -13,6 +13,16 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.34',
+    date: '2026-11-24',
+    title: 'Team Report range, invoice GST type',
+    summary: 'Migrations 20261124110000_team_report_range, 20261124120000_invoice_set_kind (both applied). No edge function changes.',
+    new: [
+      'team_report_range(p_tenant, p_from, p_to), team_report_range_list(…, p_member, p_kind): Team Report over a date range.',
+      'invoice_set_kind(p_invoice, p_kind, p_company, p_rate): change an invoice’s type / company / GST %; a new company gives its next number.',
+    ],
+  },
+  {
     version: '0.33',
     date: '2026-11-23',
     title: 'Masked keys, Callyzer Report, Team Report',
