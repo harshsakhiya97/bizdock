@@ -1,5 +1,5 @@
 // meta-preview: an ad's preview as Facebook draws it (Marketing API /{ad_id}/previews, read only).
-//   POST { tenant_id, ad_id, format? }  (the app, logged in, System Connections or funnel edit access)
+//   POST { tenant_id, ad_id, format? }  (the app, logged in: anyone who can see the ad — Funnels → view or System Connections)
 //   → { src } : the address of Facebook's preview frame (it works for a short while), or { error }
 // The token never reaches the browser.
 import { createClient } from 'npm:@supabase/supabase-js@2.49.4'
@@ -31,8 +31,9 @@ Deno.serve(async (req) => {
   const adId = String(b.ad_id ?? '')
   const format = FORMATS.has(String(b.format)) ? String(b.format) : 'MOBILE_FEED_STANDARD'
   if (!/^\d+$/.test(adId)) return json({ error: 'Unknown ad.' }, 400)
-  const { data: may } = await asCaller.rpc('can_sync_meta', { p_tenant: tenantId })
-  if (!may) return json({ error: 'You need System Connections or funnel edit access.' }, 403)
+  // read only: anyone who can see the ad (Funnels → view, or System Connections) — row security on meta_ads
+  const { data: may } = await asCaller.from('meta_ads').select('ad_id').eq('tenant_id', tenantId).eq('ad_id', adId).maybeSingle()
+  if (!may) return json({ error: 'You can’t see this ad (needs Funnels → view).' }, 403)
 
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
   const { data: ad } = await admin.from('meta_ads').select('account_id').eq('tenant_id', tenantId).eq('ad_id', adId).maybeSingle()
