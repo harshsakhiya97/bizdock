@@ -16,12 +16,13 @@ export const releases: Release[] = [
     version: '0.35',
     date: '2026-11-24',
     title: 'Lead AI summaries, AI order, lead / funnel page reads',
-    summary: 'Migrations 20261124130000_lead_insights, 20261125100000_lead_pod_steps, 20261125110000_razorpay_auto_capture, 20261125120000_can_capture_payments, 140000_webhook_form_step, 150000_lead_page_reads, 160000_lead_ai_ready, 170000_ai_routes, 180000_integrations_keep_keys_definer, 190000_funnel_page_reads (all applied). Edge functions: lead-insight (new), gemini, hellorix (+ _shared/ai.ts), meta-preview, razorpay (auto-capture, capture action).',
+    summary: 'Migrations 20261124130000_lead_insights, 20261125100000_lead_pod_steps, 20261125110000_razorpay_auto_capture, 20261125120000_can_capture_payments, 20261125130000_funnel_report_permission, 140000_webhook_form_step, 150000_lead_page_reads, 160000_lead_ai_ready, 170000_ai_routes, 180000_integrations_keep_keys_definer, 190000_funnel_page_reads (all applied). Edge functions: lead-insight (new), gemini, hellorix (+ _shared/ai.ts), meta-preview, razorpay (auto-capture, capture action).',
     new: [
       'lead_insights (+ stale triggers on leads, follow-ups, calls, meetings, bookings, invoice payments, WhatsApp, notes), lead_insight_syncs, lead_insight_status / sync_set / claim, lead_glance(p_lead), cron lead-insight every minute → edge function lead-insight.',
       'ai_routes (per feature: levels, fail_on, enabled, prompt) and _shared/ai.ts: Level 1 → 2 → 3 fail-over, one monthly ₹ limit (Gemini + Claude prices); lead-insight, gemini (AI Insights) and hellorix (Write with AI) use it.',
       'funnel_webhooks.step (optin / vsl); lead_pod_steps(p_tenant): per lead VSL form / meetings (Leads → Funnel step filter).',
       'Read policies: a visible lead’s meetings, bookings (+ items, payments), invoices (+ payments), Razorpay payments; Funnels → view reads workflows (+ hooks, runs) and Razorpay payments.',
+      'has_permission: Funnel Report → view also reads what Funnels → view reads (funnel_report module).',
     ],
     fixed: [
       'integrations_keep_keys runs as owner: server-side updates of a connection’s config were refused (403) since 23 Nov.',
