@@ -6,6 +6,7 @@
 //                                                    payments still "authorized" are captured (auto-capture, once each)
 //   POST { action: 'test', id }      from the app (System Connections): check the keys
 //   POST { action: 'sync', tenant_id } from the app (Payments page): sync now
+//   POST { action: 'capture', tenant_id, payment_id } from the app (Payments → Razorpay): capture an authorized payment
 //
 // Keys never reach the browser. Amounts are saved in ₹ (Razorpay sends paise).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
@@ -226,6 +227,32 @@ Deno.serve(async (req) => {
       saved += res.saved
     }
     return json({ ok: true, saved })
+  }
+  if (b.action === 'capture') {
+    // Payments → Razorpay → Capture: one authorized payment, for its full amount
+    const tenant = String(b.tenant_id ?? '')
+    const { data: may } = await asCaller.rpc('can_capture_payments', { p_tenant: tenant })
+    if (!may) return fail('You can’t capture payments (needs Payments → Verify or Add).', 403)
+    const { data: pay } = await admin
+      .from('razorpay_payments')
+      .select('payment_id, integration_id, status, amount, currency')
+      .eq('tenant_id', tenant)
+      .eq('payment_id', String(b.payment_id ?? ''))
+      .maybeSingle()
+    if (!pay) return fail('Payment not found.', 404)
+    if (pay.status !== 'authorized') return fail(`This payment is ${pay.status ?? 'not authorized'}: only authorized payments can be captured.`)
+    const { data: r } = await admin.from('integrations').select('id, tenant_id, config, is_enabled').eq('id', pay.integration_id).maybeSingle()
+    if (!r) return fail('Razorpay isn’t connected (System Connections).')
+    const at = new Date().toISOString()
+    try {
+      // Razorpay wants the amount in paise
+      const res = (await rz(r as Row, `/payments/${pay.payment_id}/capture`, { amount: Math.round(Number(pay.amount) * 100), currency: pay.currency ?? 'INR' })) as unknown as Pay
+      await admin.from('razorpay_payments').upsert({ ...toRow(r as Row, res), capture_tried_at: at, capture_error: null }, { onConflict: 'tenant_id,payment_id' })
+      return json({ ok: true, status: res.status })
+    } catch (e) {
+      await admin.from('razorpay_payments').update({ capture_tried_at: at, capture_error: (e as Error).message.slice(0, 300) }).eq('tenant_id', tenant).eq('payment_id', pay.payment_id)
+      return fail((e as Error).message)
+    }
   }
   return fail('Unknown action')
 })
