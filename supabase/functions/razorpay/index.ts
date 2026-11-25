@@ -2,7 +2,8 @@
 // API into razorpay_payments (Side menu → Payments → History logs).
 //
 //   POST { action: 'cron' } + header x-cron-secret   every 5 minutes: each connected account, from its last sync
-//                                                    (7 days back again, so refunds / captures update) — first time 90 days
+//                                                    (7 days back again, so refunds / captures update) — first time 90 days;
+//                                                    payments still "authorized" are captured (auto-capture, once each)
 //   POST { action: 'test', id }      from the app (System Connections): check the keys
 //   POST { action: 'sync', tenant_id } from the app (Payments page): sync now
 //
@@ -36,11 +37,15 @@ const RUN_MS = 50_000
 type Row = { id: string; tenant_id: string; config: Record<string, string>; is_enabled: boolean }
 type Pay = Record<string, unknown> & { id: string; amount: number; created_at: number; notes?: Record<string, unknown> | unknown[] }
 
-async function rz(row: Row, path: string) {
+async function rz(row: Row, path: string, post?: Record<string, unknown>) {
   const id = String(row.config.key_id ?? '').trim()
   const secret = String(row.config.key_secret ?? '').trim()
   if (!id || !secret) throw new Error('The Razorpay Key ID or Key Secret is missing.')
-  const res = await fetch(`https://api.razorpay.com/v1${path}`, { headers: { Authorization: `Basic ${btoa(`${id}:${secret}`)}` } })
+  const res = await fetch(`https://api.razorpay.com/v1${path}`, {
+    method: post ? 'POST' : 'GET',
+    headers: { Authorization: `Basic ${btoa(`${id}:${secret}`)}`, ...(post ? { 'Content-Type': 'application/json' } : {}) },
+    ...(post ? { body: JSON.stringify(post) } : {}),
+  })
   const body = await res.json().catch(() => ({}))
   if (res.status === 401) throw new Error('Razorpay refused the keys (check the Key ID and Key Secret, and Test / Live mode).')
   if (!res.ok) throw new Error(`Razorpay: ${body?.error?.description ?? res.status}`)
@@ -80,6 +85,38 @@ function toRow(row: Row, p: Pay) {
   }
 }
 
+/**
+ * Auto-capture (Razorpay connection → "Auto-capture authorized payments", on unless set to Off): a payment that is
+ * still "authorized" is captured for its full amount — once (capture_tried_at); Razorpay's refusal is kept on the
+ * payment (capture_error) and on the connection (last_capture_error). A backup to Razorpay's own auto-capture.
+ */
+async function autoCapture(admin: SupabaseClient, row: Row, items: Pay[]) {
+  if (String(row.config.auto_capture ?? '').toLowerCase() === 'off') return { captured: 0, failed: null as string | null }
+  const auth = items.filter((p) => p.status === 'authorized')
+  if (!auth.length) return { captured: 0, failed: null }
+  const { data: tried } = await admin
+    .from('razorpay_payments')
+    .select('payment_id')
+    .eq('integration_id', row.id)
+    .in('payment_id', auth.map((p) => p.id))
+    .not('capture_tried_at', 'is', null)
+  const done = new Set(((tried ?? []) as { payment_id: string }[]).map((x) => x.payment_id))
+  let captured = 0
+  let failed: string | null = null
+  for (const p of auth.filter((x) => !done.has(x.id))) {
+    const at = new Date().toISOString()
+    try {
+      const res = (await rz(row, `/payments/${p.id}/capture`, { amount: p.amount, currency: p.currency ?? 'INR' })) as unknown as Pay
+      await admin.from('razorpay_payments').upsert({ ...toRow(row, res), capture_tried_at: at, capture_error: null }, { onConflict: 'tenant_id,payment_id' })
+      captured++
+    } catch (e) {
+      failed = `Auto-capture ${p.id}: ${(e as Error).message}`
+      await admin.from('razorpay_payments').update({ capture_tried_at: at, capture_error: (e as Error).message.slice(0, 300) }).eq('integration_id', row.id).eq('payment_id', p.id)
+    }
+  }
+  return { captured, failed }
+}
+
 /** one account: the payments from its last sync (7 days back again), else the last 90 days */
 async function syncOne(admin: SupabaseClient, row: Row, started: number) {
   const now = Math.floor(Date.now() / 1000)
@@ -87,6 +124,8 @@ async function syncOne(admin: SupabaseClient, row: Row, started: number) {
   const from = last ? last - AGAIN_DAYS * DAY : now - FIRST_DAYS * DAY
   let skip = 0
   let saved = 0
+  let captured = 0
+  let capErr: string | null = null
   try {
     for (;;) {
       if (Date.now() - started > RUN_MS) break
@@ -96,20 +135,36 @@ async function syncOne(admin: SupabaseClient, row: Row, started: number) {
         const { error } = await admin.from('razorpay_payments').upsert(items.map((p) => toRow(row, p)), { onConflict: 'tenant_id,payment_id' })
         if (error) throw new Error(error.message)
         saved += items.length
+        const c = await autoCapture(admin, row, items)
+        captured += c.captured
+        if (c.failed) capErr = c.failed
       }
       if (items.length < 100) {
         // all of it: next time from now (7 days back again)
         await admin
           .from('integrations')
-          .update({ status: 'connected', last_error: null, config: { ...row.config, synced_until: String(now), last_sync_at: new Date().toISOString() } })
+          .update({
+            status: 'connected',
+            last_error: null,
+            config: {
+              ...row.config,
+              synced_until: String(now),
+              last_sync_at: new Date().toISOString(),
+              ...(captured ? { last_capture_at: new Date().toISOString() } : {}),
+              ...(capErr ? { last_capture_error: capErr, last_capture_error_at: new Date().toISOString() } : {}),
+            },
+          })
           .eq('id', row.id)
-        return { saved, done: true }
+        return { saved, captured, done: true }
       }
       skip += 100
     }
     // out of time: the next run carries on (same window, already-saved ones are just updated)
-    await admin.from('integrations').update({ config: { ...row.config, last_sync_at: new Date().toISOString() } }).eq('id', row.id)
-    return { saved, done: false }
+    await admin
+      .from('integrations')
+      .update({ config: { ...row.config, last_sync_at: new Date().toISOString(), ...(capErr ? { last_capture_error: capErr, last_capture_error_at: new Date().toISOString() } : {}) } })
+      .eq('id', row.id)
+    return { saved, captured, done: false }
   } catch (e) {
     await admin.from('integrations').update({ status: 'error', last_error: (e as Error).message }).eq('id', row.id)
     return { saved, error: (e as Error).message }
