@@ -35,7 +35,7 @@ type Run = {
   event_id: string | null
   created_at: string
   /** progress inside a step that runs over time */
-  state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string>; hops?: number; lead_found?: boolean; event_id?: string; tries?: number; ai_call?: { node: string; id: string; since: number } | null } | null
+  state: { bulk?: { node: string; i: number } | null; vars?: Record<string, string>; hops?: number; lead_found?: boolean; event_id?: string; tries?: number; ai_call?: { node: string; id: string | null; since: number; try?: number; started?: number } | null; after_ai?: { node: string; call: string; since: number } | null; sub?: string | null } | null
 }
 type LogLine = { at: string; node_id: string; kind: string; status: 'ok' | 'skipped' | 'failed' | 'waiting' | 'stopped'; detail: string }
 
@@ -120,7 +120,7 @@ async function advance(admin: SupabaseClient, run: Run) {
   }
   let at = run.node_id
   // waiting inside a Bulk WhatsApp step: carry on with that step
-  let resume = (byId.get(at)?.type === 'bulk_whatsapp' && state.bulk?.node === at) || (byId.get(at)?.type === 'ai_call' && state.ai_call?.node === at)
+  let resume = (byId.get(at)?.type === 'bulk_whatsapp' && state.bulk?.node === at) || (byId.get(at)?.type === 'ai_call' && (state.ai_call?.node === at || state.after_ai?.node === at))
   // a Switch / Yes-No step picks the next step itself
   let jump: Node | null | undefined
   for (let i = 0; i < MAX_STEPS; i++) {
@@ -337,10 +337,60 @@ async function advance(admin: SupabaseClient, run: Run) {
         return save({ status: 'failed', node_id: at, error: (e as Error).message })
       }
     } else if (n.type === 'ai_call') {
-      // AI call (HelloRix): place the call, wait for its result (the call's webhook wakes this run), then go down the
-      // path of its outcome: Interested / Call back / Not interested / Not reached
-      const st = state.ai_call
-      if (!st || st.node !== n.id) {
+      // AI call (HelloRix): place the call and wait for its result (the call's webhook wakes this run). Not received
+      // (no answer, busy, failed, no result in 3 hours): called again after "retry_every" minutes, up to "tries" calls;
+      // retries wait for the calling hours. Paths:
+      //   received     the lead picked up: right when the call ends
+      //   updated      Received & lead updated: a second run of this workflow, once the lead's category and note,
+      //                the transcript and AI Insights are done
+      //   not_reached  Not received after the last try (or the call can't be placed)
+      const tries = Math.max(1, Math.min(10, Math.round(Number(d.tries ?? 3)) || 3))
+      const gap = Math.max(5, Math.min(1440, Math.round(Number(d.retry_every ?? 30)) || 30))
+      const OUT: Record<string, string> = { interested: 'Interested', callback: 'Call back', deferred: 'Later', declined: 'Not interested' }
+      const go = (handle: string, label: string, detail: string) => {
+        const edge = edges.find((x) => x.source === n.id && x.sourceHandle === handle)
+        if (!edge) {
+          note(n, 'ok', `${detail}: “${label}” has no next step, so the workflow ends here.`)
+          return null
+        }
+        note(n, 'ok', detail)
+        return byId.get(edge.target) ?? null
+      }
+
+      // the second run: Received & lead updated
+      const aa = state.after_ai
+      if (aa && aa.node === n.id) {
+        const { data: call } = await admin.from('ai_calls').select('id, lead_id, lead_updated, transcript').eq('id', aa.call).maybeSingle()
+        const waited = Date.now() - aa.since
+        // the category and note come with the call's result; the transcript a little after the call ends
+        if (call && !call.lead_updated && waited < 2 * 60_000) return save({ status: 'waiting', node_id: n.id, next_at: new Date(Date.now() + 20_000).toISOString() })
+        const { data: secret } = await admin.rpc('workflow_cron_secret')
+        const head = { 'Content-Type': 'application/json', 'x-cron-secret': String(secret ?? '') }
+        let hasTranscript = Array.isArray(call?.transcript) && (call!.transcript as unknown[]).length > 0
+        if (call && !hasTranscript) {
+          const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/hellorix`, { method: 'POST', headers: head, body: JSON.stringify({ action: 'transcript', id: call.id }) })
+          hasTranscript = !!(await r.json().catch(() => ({})))?.saved
+          if (!hasTranscript && waited < 3 * 60_000) return save({ status: 'waiting', node_id: n.id, next_at: new Date(Date.now() + 30_000).toISOString() })
+        }
+        let insight = 'no lead'
+        if (call?.lead_id) {
+          const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/lead-insight`, { method: 'POST', headers: head, body: JSON.stringify({ action: 'lead', lead_id: call.lead_id }) })
+          const j = await r.json().catch(() => ({ error: `AI Insights error ${r.status}` }))
+          insight = j?.error ? `AI Insights not updated now (${String(j.error).slice(0, 120)}): it catches up in a minute` : 'AI Insights updated'
+        }
+        if (call) await admin.from('ai_calls').update({ lead_synced_at: new Date().toISOString() }).eq('id', call.id)
+        state.after_ai = null
+        const next = go('updated', 'Received & lead updated', `Received & lead updated · ${hasTranscript ? 'transcript saved' : 'no transcript'} · ${insight}`)
+        if (!next) return save({ status: 'done', node_id: n.id, error: null })
+        jump = next
+        at = n.id
+        continue
+      }
+
+      const st = state.ai_call && state.ai_call.node === n.id ? state.ai_call : null
+      if (!st || !st.id) {
+        const attempt = (st?.try ?? 0) + 1
+        const started = st?.started ?? Date.now()
         let placed: { id?: string; error?: string } = {}
         try {
           let to: string | null = null
@@ -377,16 +427,25 @@ async function advance(admin: SupabaseClient, run: Run) {
           placed = await r.json().catch(() => ({ error: `AI Calling error ${r.status}` }))
           if (!r.ok || placed.error) throw new Error(placed.error ?? `AI Calling error ${r.status}`)
         } catch (e) {
-          // not placed: down Not reached (or the workflow ends there)
-          note(n, 'failed', `AI call not placed: ${(e as Error).message}`)
-          const edge = edges.find((x) => x.source === n.id && x.sourceHandle === 'not_reached')
-          if (!edge) return save({ status: 'done', node_id: n.id, error: null })
-          jump = byId.get(edge.target) ?? null
+          const msg = (e as Error).message
+          // outside the calling hours: wait for them (not counted as a try), for up to 2 days
+          if (/only placed (between|on the calling days)/.test(msg) && Date.now() - started < 2 * 86400_000) {
+            state.ai_call = { node: n.id, id: null, since: Date.now(), try: attempt - 1, started }
+            const last = log[log.length - 1]
+            if (!last || last.node_id !== n.id || !last.detail.startsWith('Outside the calling hours')) note(n, 'waiting', `Outside the calling hours: call ${attempt} of ${tries} waits for them (checked every ${gap} min)`)
+            return save({ status: 'waiting', node_id: n.id, next_at: new Date(Date.now() + gap * 60_000).toISOString() })
+          }
+          // can't be placed (no number, not connected, …): Not received
+          note(n, 'failed', `AI call not placed: ${msg}`)
+          state.ai_call = null
+          const next = go('not_reached', 'Not received', 'Not received (the call could not be placed)')
+          if (!next) return save({ status: 'done', node_id: n.id, error: null })
+          jump = next
           at = n.id
           continue
         }
-        state.ai_call = { node: n.id, id: String(placed.id), since: Date.now() }
-        note(n, 'waiting', `AI call placed (${String(d.objective_name ?? 'template')}): waiting for its result`)
+        state.ai_call = { node: n.id, id: String(placed.id), since: Date.now(), try: attempt, started }
+        note(n, 'waiting', `AI call ${attempt} of ${tries} placed (${String(d.objective_name ?? 'template')}): waiting for its result`)
         // checked again when the result comes in (or every 10 minutes)
         return save({ status: 'waiting', node_id: n.id, next_at: new Date(Date.now() + 10 * 60_000).toISOString() })
       }
@@ -395,20 +454,58 @@ async function advance(admin: SupabaseClient, run: Run) {
         return save({ status: 'waiting', node_id: n.id, next_at: new Date(Date.now() + 10 * 60_000).toISOString() })
       }
       const out = String(call?.outcome ?? '').toLowerCase()
-      const path = out === 'interested' ? 'interested' : out === 'callback' || out === 'deferred' ? 'callback' : out === 'declined' ? 'declined' : 'not_reached'
-      const LABEL: Record<string, string> = { interested: 'Interested', callback: 'Call back', declined: 'Not interested', not_reached: 'Not reached' }
-      const got: Record<string, string> = { ai_call_outcome: LABEL[path], ai_call_summary: String(call?.summary ?? '') }
+      const received = !!call?.final && (String(call.status) === 'completed' || !!OUT[out])
+      const attempt = st.try ?? 1
+      if (!received) {
+        const why = !call?.final ? 'no result in 3 hours' : String(call?.status ?? '').replace(/_/g, ' ')
+        if (attempt < tries) {
+          state.ai_call = { node: n.id, id: null, since: Date.now(), try: attempt, started: st.started ?? st.since }
+          const again = new Date(Date.now() + gap * 60_000)
+          note(n, 'waiting', `Not received (call ${attempt} of ${tries}: ${why}): calling again at ${again.toISOString()}`)
+          return save({ status: 'waiting', node_id: n.id, next_at: again.toISOString() })
+        }
+        state.ai_call = null
+        const got = { ai_call_outcome: 'Not received', ai_call_summary: '' }
+        state.vars = { ...(state.vars ?? {}), ...got }
+        Object.assign(ctx.vars, got)
+        const next = go('not_reached', `Not received after ${tries} ${tries === 1 ? 'try' : 'tries'}`, `Not received after ${attempt} ${attempt === 1 ? 'call' : 'calls'} (last: ${why})`)
+        if (!next) return save({ status: 'done', node_id: n.id, error: null })
+        jump = next
+        at = n.id
+        continue
+      }
+      const got: Record<string, string> = { ai_call_outcome: OUT[out] ?? 'Received', ai_call_summary: String(call?.summary ?? '') }
       for (const [k, v] of Object.entries((call?.collected ?? {}) as Record<string, unknown>)) if (v != null && typeof v !== 'object') got[`ai_${varKey(k)}`] = String(v)
       state.vars = { ...(state.vars ?? {}), ...got }
       Object.assign(ctx.vars, got)
       state.ai_call = null
-      const edge = edges.find((x) => x.source === n.id && x.sourceHandle === path)
-      if (!edge) {
-        note(n, 'ok', `${LABEL[path]}${call?.final ? '' : ' (no result after 3 hours)'}: that path has no next step, so the workflow ends here.`)
-        return save({ status: 'done', node_id: n.id, error: null })
+      // Received & lead updated: its own run, started now, goes on once the lead is updated
+      if (edges.some((x) => x.source === n.id && x.sourceHandle === 'updated')) {
+        await admin.from('workflow_runs').insert({
+          tenant_id: run.tenant_id,
+          workflow_id: run.workflow_id,
+          lead_id: run.lead_id,
+          status: 'waiting',
+          node_id: n.id,
+          next_at: new Date(Date.now() + 15_000).toISOString(),
+          log: [{ at: new Date().toISOString(), node_id: n.id, kind: n.type, status: 'waiting', detail: 'From the AI call (Received): waiting until the lead is updated (category, note, transcript, AI Insights)' }],
+          is_test: run.is_test,
+          test_data: run.test_data,
+          payload: run.payload,
+          // the form post and the webinar date stay with it (in its state: one run per post / date)
+          state: {
+            ...state,
+            ai_call: null,
+            after_ai: { node: n.id, call: st.id, since: Date.now() },
+            sub: run.submission_id ?? state.sub ?? null,
+            event_id: run.event_id ?? state.event_id,
+            vars: { ...(state.vars ?? {}), submitted_at: ctx.vars.submitted_at },
+          },
+        })
       }
-      note(n, 'ok', `${LABEL[path]}${call?.summary ? ` · ${String(call.summary).slice(0, 160)}` : ''}`)
-      jump = byId.get(edge.target) ?? null
+      const next = go('received', 'Received', `Received (call ${attempt} of ${tries}) · ${got.ai_call_outcome}${call?.summary ? ` · ${String(call.summary).slice(0, 160)}` : ''}`)
+      if (!next) return save({ status: 'done', node_id: n.id, error: null })
+      jump = next
     } else if (n.type === 'wait') {
       const ms = Math.max(1, Number(d.amount) || 1) * (UNIT_MS[String(d.unit)] ?? UNIT_MS.days)
       const until = new Date(Date.now() + ms)
@@ -875,8 +972,9 @@ async function makeZoomMeeting(admin: SupabaseClient, run: Run, n: Node, d: Reco
   let endTime: string
   if (d.use_webhook) {
     let sent: Record<string, unknown> = (run.is_test ? run.test_data : run.payload) ?? {}
-    if (!run.is_test && !run.payload && run.submission_id) {
-      const { data: sub } = await admin.from('lead_submissions').select('data').eq('id', run.submission_id).maybeSingle()
+    const subId = run.submission_id ?? run.state?.sub ?? null
+    if (!run.is_test && !run.payload && subId) {
+      const { data: sub } = await admin.from('lead_submissions').select('data').eq('id', subId).maybeSingle()
       sent = (sub?.data ?? {}) as Record<string, unknown>
     }
     const startKey = String(d.start_var || 'meeting_start')
@@ -1271,8 +1369,9 @@ async function bulkBase(admin: SupabaseClient, run: Run, wf: Record<string, unkn
     if (raw == null || raw === '') {
       // a webhook field kept on the submission
       let sent: Record<string, unknown> = (run.is_test ? run.test_data : run.payload) ?? {}
-      if (!run.is_test && !run.payload && run.submission_id) {
-        const { data: sub } = await admin.from('lead_submissions').select('data').eq('id', run.submission_id).maybeSingle()
+      const subId = run.submission_id ?? run.state?.sub ?? null
+      if (!run.is_test && !run.payload && subId) {
+        const { data: sub } = await admin.from('lead_submissions').select('data').eq('id', subId).maybeSingle()
         sent = (sub?.data ?? {}) as Record<string, unknown>
       }
       raw = sent[key] ?? Object.entries(sent).find(([k]) => varKey(k) === key)?.[1]

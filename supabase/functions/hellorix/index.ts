@@ -15,6 +15,7 @@
 // From pg_cron / the workflow runner (x-cron-secret):
 //   { action: 'cron' }                          unfinished calls of every workspace
 //   { action: 'run_call', tenant_id, run_id, lead_id?, to, name?, objective_id, variables? }   a workflow's AI call step
+//   { action: 'transcript', id }   (x-cron-secret) a finished call's transcript saved on its row
 //
 // The key never reaches the browser. Each call is kept in ai_calls with HelloRix's cost (₹).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
@@ -309,7 +310,11 @@ async function syncOne(db: SupabaseClient, key: string, row: Record<string, unkn
   const id = String(row.hx_call_id ?? '')
   if (id && !id.startsWith('pre-')) {
     const r = await hx(key, 'GET', `/voice/calls/${encodeURIComponent(id)}`)
-    if (r.status < 300) return applyCall(db, row, r.d)
+    if (r.status < 300) {
+      const done = await applyCall(db, row, r.d)
+      if (done.final && String(done.status) === 'completed') await saveTranscript(db, key, done).catch(() => null)
+      return done
+    }
   }
   const since = new Date(Date.parse(String(row.placed_at)) - 120_000).toISOString()
   const q = new URLSearchParams({ to: String(row.to_phone), since, limit: '20' })
@@ -321,7 +326,11 @@ async function syncOne(db: SupabaseClient, key: string, row: Record<string, unkn
   const mine = listOf(r.d, 'calls')
     .filter((c) => c.id === id || !used.has(String(c.id)))
     .sort((a, b) => Date.parse(String(a.placed_at)) - Date.parse(String(b.placed_at)))[0]
-  if (mine) return applyCall(db, row, mine)
+  if (mine) {
+    const done = await applyCall(db, row, mine)
+    if (done.final && String(done.status) === 'completed') await saveTranscript(db, key, done).catch(() => null)
+    return done
+  }
   if (Date.now() - Date.parse(String(row.placed_at)) > 6 * 3600_000) {
     await db.from('ai_calls').update({ final: true, status: 'expired', updated_at: new Date().toISOString() }).eq('id', row.id)
   }
@@ -341,6 +350,18 @@ async function syncTenant(db: SupabaseClient, tenantId: string) {
     }
   }
   return n
+}
+
+/** a finished call's transcript, saved on the row once (HelloRix keeps it; read again until it's there) */
+async function saveTranscript(db: SupabaseClient, key: string, row: Record<string, unknown>) {
+  if (Array.isArray(row.transcript) && (row.transcript as unknown[]).length) return row.transcript as unknown[]
+  const hid = String(row.hx_call_id ?? '')
+  if (!key || !hid || hid.startsWith('pre-') || !row.final) return null
+  const t = await hx(key, 'GET', `/voice/calls/${encodeURIComponent(hid)}/transcript`)
+  const turns = t.status < 300 ? ((t.d.turns as unknown[]) ?? []) : []
+  if (!turns.length) return null
+  await db.from('ai_calls').update({ transcript: turns }).eq('id', row.id)
+  return turns
 }
 
 // ---------- the webhook ----------
@@ -382,7 +403,11 @@ async function webhook(req: Request, integrationId: string) {
       .limit(5)
     row = (cands ?? []).find((x: Record<string, unknown>) => !c.objective_id || x.objective_id === c.objective_id) ?? null
   }
-  if (row) await applyCall(db, row, c)
+  if (row) {
+    const done = await applyCall(db, row, c)
+    const key = String((conn.config as Cfg)?.api_key ?? '')
+    if (done.final && String(done.status) === 'completed') await saveTranscript(db, key, done).catch(() => null)
+  }
   return json({ ok: true })
 }
 
@@ -447,6 +472,14 @@ Deno.serve(async (req) => {
       } catch (e) {
         return fail((e as Error).message)
       }
+    }
+    if (b.action === 'transcript') {
+      // the AI call step (Received & lead updated): the call's transcript saved now
+      const { data: row } = await db.from('ai_calls').select('*').eq('id', String(b.id)).maybeSingle()
+      if (!row) return fail('Call not found.', 404)
+      const conn = await connOf(db, String(row.tenant_id))
+      const turns = await saveTranscript(db, String(conn?.config?.api_key ?? ''), row).catch(() => null)
+      return json({ ok: true, saved: !!turns?.length })
     }
     // every workspace with an unfinished call
     const { data: open } = await db.from('ai_calls').select('tenant_id').eq('final', false).gte('placed_at', new Date(Date.now() - 2 * 86400_000).toISOString())
@@ -563,13 +596,14 @@ Deno.serve(async (req) => {
       const { data: row } = await asCaller.from('ai_calls').select('*').eq('id', String(b.id)).maybeSingle()
       if (!row) return fail('Call not found.', 404)
       let fresh = row as Record<string, unknown>
-      let turns: unknown[] = []
+      let turns: unknown[] = Array.isArray(row.transcript) ? (row.transcript as unknown[]) : []
       const id = String(row.hx_call_id ?? '')
       if (conn?.config?.api_key) {
         try {
           if (!row.final || !row.cost_final) fresh = await syncOne(db, key(), row)
+          turns = (await saveTranscript(db, key(), fresh)) ?? []
           const hid = String(fresh.hx_call_id ?? id)
-          if (hid && !hid.startsWith('pre-')) {
+          if (!turns.length && hid && !hid.startsWith('pre-')) {
             const t = await hx(key(), 'GET', `/voice/calls/${encodeURIComponent(hid)}/transcript`)
             if (t.status < 300) turns = (t.d.turns as unknown[]) ?? []
           }

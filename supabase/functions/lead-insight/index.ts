@@ -1,6 +1,7 @@
 // lead-insight: the AI summary of a lead (Lead page → AI Insights), by Gemini — the workspace's key (System
 // Connections → Gemini AI), counted in ai_usage (feature lead_insight), stopped by its monthly ₹ limit.
-// Gemini gets the lead's details, follow-ups (comments / outcomes), notes, Callyzer call transcripts, meetings,
+// Gemini gets the lead's details, follow-ups (comments / outcomes), notes, Callyzer call transcripts, AI calls
+// (HelloRix: result, summary, answers, transcript), meetings,
 // bookings / invoices / payments and WhatsApp messages — with the lead's name, phone numbers and emails hidden.
 //
 //   POST { action: 'cron' } + header x-cron-secret (public.workflow_cron_secret()), every minute while needed, ~45 s:
@@ -9,6 +10,7 @@
 //        (newest first); the sync ends itself when none is left.
 //     A failure is tried again on later runs (3 tries); a rate limit just ends that part of the run.
 //   POST { action: 'refresh', lead_id } (from the app, logged in) → that lead now → { content, generated_at }
+//   POST { action: 'lead', lead_id } + x-cron-secret (a workflow's AI call step) → that lead now
 //
 // Which AI writes it: System Connections → AI order → Lead AI Insights (Level 1, 2, 3; on / off; the prompt, empty =
 // the default below). The monthly ₹ limit counts every AI.
@@ -26,7 +28,7 @@ const BATCH = 5
 
 class RateLimited extends Error {}
 
-const PROMPT = `You are a sales assistant for an Indian business. Below is everything the CRM knows about one lead (a possible customer): the lead's details, follow-up calls and their comments, notes, phone call transcripts (Hindi / English / Hinglish), meetings, bookings and payments, and WhatsApp messages. The lead's name, phone numbers and emails are hidden ("the lead", [phone], [email]).
+const PROMPT = `You are a sales assistant for an Indian business. Below is everything the CRM knows about one lead (a possible customer): the lead's details, follow-up calls and their comments, notes, phone call transcripts (Hindi / English / Hinglish), AI calls (an AI voice agent's calls with their transcripts), meetings, bookings and payments, and WhatsApp messages. The lead's name, phone numbers and emails are hidden ("the lead", [phone], [email]).
 
 Write a short, practical summary for the business's team, in simple English, as JSON:
 - summary: 2–3 lines: who the lead is, what they want, where things stand now.
@@ -35,6 +37,7 @@ Write a short, practical summary for the business's team, in simple English, as 
 - objections: what holds them back (price, time, trust, …), short items; empty if none.
 - next_action: the one best thing the team should do next (what, and when if it's clear).
 - risks: what could make this lead go cold or be lost, short items; empty if none.
+- asked_for: what the lead asked the business for, in their own words where possible (more details on a product or package, a price list, a call back at a time, a demo, a document on WhatsApp, …), short items, newest first; empty if none.
 Use only what the records say; don't invent facts. Dates are in India time.`
 
 const SCHEMA = {
@@ -48,8 +51,9 @@ const SCHEMA = {
     objections: { type: 'ARRAY', items: { type: 'STRING' } },
     next_action: { type: 'STRING' },
     risks: { type: 'ARRAY', items: { type: 'STRING' } },
+    asked_for: { type: 'ARRAY', items: { type: 'STRING' } },
   },
-  required: ['summary', 'interest', 'needs', 'budget', 'timeline', 'objections', 'next_action', 'risks'],
+  required: ['summary', 'interest', 'needs', 'budget', 'timeline', 'objections', 'next_action', 'risks', 'asked_for'],
 }
 
 const ist = (s: string | null | undefined) =>
@@ -84,7 +88,7 @@ async function gather(admin: SupabaseClient, leadId: string) {
   if (!lead) throw new Error('Lead not found.')
   const m = masker(lead)
   const t = lead.tenant_id as string
-  const [stage, funnel, source, biz, lost, fus, outs, acts, calls, meets, books, invs, wa] = await Promise.all([
+  const [stage, funnel, source, biz, lost, fus, outs, acts, calls, meets, books, invs, wa, aic] = await Promise.all([
     lead.stage_id ? admin.from('funnel_stages').select('name, kind').eq('id', lead.stage_id).maybeSingle() : Promise.resolve({ data: null }),
     lead.funnel_id ? admin.from('funnels').select('name').eq('id', lead.funnel_id).maybeSingle() : Promise.resolve({ data: null }),
     lead.source_id ? admin.from('lead_sources').select('name').eq('id', lead.source_id).maybeSingle() : Promise.resolve({ data: null }),
@@ -98,6 +102,7 @@ async function gather(admin: SupabaseClient, leadId: string) {
     admin.from('bookings').select('booking_date, purpose, status, total_amount, paid_amount, order_status').eq('lead_id', leadId).order('booking_date', { ascending: false }).limit(15),
     admin.from('invoices').select('id, invoice_date, total_amount, paid_amount').eq('lead_id', leadId).order('invoice_date', { ascending: false }).limit(15),
     admin.from('whatsapp_logs').select('sent_at, direction, template, body, status').eq('lead_id', leadId).order('sent_at', { ascending: false }).limit(15),
+    admin.from('ai_calls').select('placed_at, objective_name, status, outcome, summary, collected, talk_seconds, transcript').eq('lead_id', leadId).eq('final', true).order('placed_at', { ascending: false }).limit(10),
   ])
   const outName = new Map(((outs.data ?? []) as { id: string; name: string }[]).map((o) => [o.id, o.name]))
   const L: string[] = []
@@ -150,6 +155,23 @@ async function gather(admin: SupabaseClient, leadId: string) {
       }
     }
   }
+  const ac = (aic.data ?? []) as Record<string, unknown>[]
+  if (ac.length) {
+    L.push('', 'AI CALLS (an AI voice agent called the lead; newest first)')
+    let budget = 16_000
+    for (const x of ac) {
+      L.push(`- ${ist(x.placed_at as string)} · ${x.objective_name ?? 'call'} · ${x.outcome ?? x.status ?? ''}${x.talk_seconds ? ` · ${Math.round(Number(x.talk_seconds))} s` : ''}`)
+      if (x.summary) L.push(`  Summary: ${m(cut(x.summary, 600))}`)
+      const ans = Object.entries((x.collected ?? {}) as Record<string, unknown>).filter(([, v]) => v !== null && v !== '' && typeof v !== 'object')
+      if (ans.length) L.push(`  Answers: ${m(cut(ans.map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · '), 600))}`)
+      const turns = Array.isArray(x.transcript) ? (x.transcript as { speaker?: string; text?: string }[]) : []
+      if (turns.length && budget > 0) {
+        const tr = m(cut(turns.map((t) => `${t.speaker === 'agent' ? 'AI' : 'Lead'}: ${t.text ?? ''}`).join('\n'), Math.min(5000, budget)))
+        budget -= tr.length
+        L.push(`  Transcript:\n  ${tr.replace(/\n/g, '\n  ')}`)
+      }
+    }
+  }
   const mt = (meets.data ?? []) as Record<string, string | null>[]
   if (mt.length) {
     L.push('', 'MEETINGS')
@@ -178,7 +200,7 @@ async function gather(admin: SupabaseClient, leadId: string) {
   return { tenantId: t, text: L.join('\n') }
 }
 
-const JSON_SHAPE = `{"summary": string, "interest": {"level": "hot" | "warm" | "cold", "why": string}, "needs": string, "budget": string, "timeline": string, "objections": string[], "next_action": string, "risks": string[]}`
+const JSON_SHAPE = `{"summary": string, "interest": {"level": "hot" | "warm" | "cold", "why": string}, "needs": string, "budget": string, "timeline": string, "objections": string[], "next_action": string, "risks": string[], "asked_for": string[]}`
 
 /** one lead → the AI order (System Connections → AI order → Lead AI Insights) → summary saved */
 async function summarize(admin: SupabaseClient, cache: Map<string, Route>, leadId: string) {
@@ -273,6 +295,21 @@ Deno.serve(async (req) => {
       }
     }
     return json({ ok: true, auto, syncs })
+  }
+
+  if (b.action === 'lead') {
+    // a workflow's AI call step (Received & lead updated): this lead now
+    const { data: secret } = await admin.rpc('workflow_cron_secret')
+    if (!secret || req.headers.get('x-cron-secret') !== secret) return json({ error: 'Not allowed' }, 401)
+    const { data: lead } = await admin.from('leads').select('id, tenant_id').eq('id', String(b.lead_id)).maybeSingle()
+    if (!lead) return json({ error: 'Lead not found.' }, 404)
+    await admin.from('lead_insights').upsert({ lead_id: lead.id, tenant_id: lead.tenant_id, stale: true, stale_at: new Date().toISOString(), tries: 0, error: null })
+    try {
+      const r = await summarize(admin, cache, String(lead.id))
+      return json({ ok: true, generated_at: r.generated_at })
+    } catch (e) {
+      return json({ error: e instanceof RateLimited ? 'the AI is busy (rate limit)' : (e as Error).message })
+    }
   }
 
   if (b.action === 'refresh') {
