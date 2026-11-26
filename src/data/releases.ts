@@ -13,6 +13,19 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.36',
+    date: '2026-11-26',
+    title: 'Paid Podcast board data, transcript speaker check, Claude without temperature',
+    summary: 'Migrations 20261126120000_pod_board, 20261126130000_pod_board_details, 20261126140000_call_labels_checked, 20261126140100_transcript_sync_status_labels (all applied). Edge functions: call-transcribe, lead-insight, gemini, hellorix (_shared/ai.ts).',
+    new: [
+      'pod_board(p_tenant): per lead the caller can see — follow-up calls done, the last follow-up (date, result), meetings (booked / done / no-show, the next or latest: date, time, status), the podcast booking (date) and its money; access checked once.',
+      'calls.labels_checked: call-transcribe runs Claude’s speaker check (fixLabels) after Gemini on every new transcript and Regenerate; call_transcript_claim relabel = every transcript not checked yet; transcript_sync_status counts them.',
+    ],
+    fixed: [
+      'Claude requests sent temperature, which newer Claude models refuse (_shared/ai.ts fail-over and the transcript speaker check); a failed speaker check is now kept in calls.transcript_error.',
+    ],
+  },
+  {
     version: '0.35',
     date: '2026-11-24',
     title: 'Lead AI summaries, AI order, lead / funnel page reads',
