@@ -1,11 +1,12 @@
-// call-transcribe: the transcript of every Callyzer call recording (our copy in bucket call-recordings), by Gemini —
+// call-transcribe: the transcript of every Callyzer call recording (our copy in bucket call-recordings), by Gemini, then
+// Claude (System Connections → Claude API, if connected) checks who said what — Gemini flash-lite flips the speakers —
 // the workspace's key (System Connections → Gemini AI), counted in ai_usage (feature call_transcript), stopped by its
 // monthly ₹ limit. Newest calls first, then the backlog.
 //
 //   POST { action: 'cron' } + header x-cron-secret (public.workflow_cron_secret()), every minute while needed, ~45 s:
 //     1. new calls (last 3 days) with no transcript → Gemini, up to 15 a run (call_transcript_claim 'auto')
 //     2. each workspace with Sync transcripts on (transcript_syncs.active, Callyzer → History logs):
-//        - old transcripts (written before 21 Nov 15:00 UTC) → Claude fixes the Team / Customer labels ('relabel')
+//        - transcripts whose Team / Customer labels Claude hasn't checked yet → Claude fixes them ('relabel')
 //        - every call with no transcript → Gemini ('write')
 //        and the sync ends itself when nothing is left (or only what its engines can't do).
 //     A failure is tried again on later runs (3 tries); a rate limit just ends that part of the run (no try counted).
@@ -61,7 +62,7 @@ function b64(bytes: Uint8Array) {
 }
 
 /** one call: its recording → Gemini → transcript saved */
-async function transcribe(admin: SupabaseClient, cache: Map<string, Gem>, id: string): Promise<string> {
+async function transcribe(admin: SupabaseClient, cache: Map<string, Gem>, id: string, cla: Map<string, Cla> = new Map()): Promise<string> {
   const { data: c } = await admin.from('calls').select('id, tenant_id, recording_path, transcript_tries, direction, emp_name, client_name, lead_id, phone').eq('id', id).maybeSingle()
   if (!c?.recording_path) throw new Error('No recording copied yet.')
   const g = await geminiFor(admin, cache, c.tenant_id)
@@ -102,7 +103,23 @@ async function transcribe(admin: SupabaseClient, cache: Map<string, Gem>, id: st
       output_tokens: Number(u.candidatesTokenCount ?? 0) + Number(u.thoughtsTokenCount ?? 0),
       member_id: null,
     })
-    await admin.from('calls').update({ transcript: transcript || '(no conversation)', transcript_status: 'done', transcript_error: null, transcript_at: new Date().toISOString(), transcript_lease: null, transcript_redo: false }).eq('id', id)
+    // Claude checks who said what (if connected); if it can't, Gemini's labels stay and Sync transcripts checks it later
+    let checked = false
+    if (/^(Team|Customer)\b/m.test(transcript)) {
+      const cl = await claudeFor(admin, cla, c.tenant_id)
+      if (!('error' in cl)) {
+        try {
+          transcript = await fixLabels(admin, cl, c, transcript)
+          checked = true
+        } catch {
+          /* Gemini's labels stay */
+        }
+      }
+    }
+    await admin
+      .from('calls')
+      .update({ transcript: transcript || '(no conversation)', labels_checked: checked, transcript_status: 'done', transcript_error: null, transcript_at: new Date().toISOString(), transcript_lease: null, transcript_redo: false })
+      .eq('id', id)
     return transcript
   } catch (e) {
     if (e instanceof RateLimited) {
@@ -155,10 +172,44 @@ const RELABEL = `Below is the transcript of a recorded phone call in India betwe
 Fix only the speaker labels and the line breaks:
 - One turn per line. Each line starts with exactly "Team:" or "Customer:"; when the person's name is known, add it in brackets: "Team (Alka):", "Customer (Rahul):".
 - Decide who is who from the conversation and the facts below (who introduces themself and the business, who explains the offer or books the meeting = Team).
+- Every line gets a speaker, also short sounds like "hm", "haa", "ok", "ji": they belong to whoever is listening (usually the other person than the line before).
 - Keep every word exactly as it is: don't translate, correct, shorten or add anything. Notes in brackets like [noise] stay where they are.
 - Reply with the fixed transcript only, nothing before or after it.`
 
-/** one old transcript → Claude → the same words with the right Team / Customer labels */
+type CallWho = { id: string; tenant_id: string; direction: string | null; emp_name: string | null; client_name: string | null; lead_id: string | null; phone: string | null }
+
+/** a transcript → Claude → the same words with the right Team / Customer labels (usage counted) */
+async function fixLabels(admin: SupabaseClient, g: { id: string; key: string; model: string }, c: CallWho, text: string): Promise<string> {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': g.key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: g.model,
+      max_tokens: 8000,
+      temperature: 0,
+      system: RELABEL,
+      messages: [{ role: 'user', content: `${(await who(admin, c)).trim()}\n\nTRANSCRIPT:\n${text.slice(0, 60000)}` }],
+    }),
+  })
+  const d = await r.json().catch(() => ({}))
+  if (r.status === 429 || r.status === 529) throw new RateLimited(d?.error?.message ?? 'Claude is busy')
+  if (!r.ok) throw new Error(d?.error?.message ? `Claude: ${d.error.message}` : `Claude error ${r.status}`)
+  const out = ((d?.content ?? []) as { type: string; text?: string }[]).filter((x) => x.type === 'text').map((x) => x.text ?? '').join('').trim()
+  await admin.from('ai_usage').insert({
+    tenant_id: c.tenant_id,
+    integration_id: g.id,
+    model: g.model,
+    feature: 'call_relabel',
+    input_tokens: Number(d?.usage?.input_tokens ?? 0),
+    output_tokens: Number(d?.usage?.output_tokens ?? 0),
+    member_id: null,
+  })
+  // the same conversation back: labelled lines, and not much shorter (no words dropped)
+  if (!out || !/^(Team|Customer)\b/m.test(out) || out.length < text.length * 0.8) throw new Error('Claude gave no usable transcript.')
+  return out
+}
+
+/** one saved transcript → Claude checks its labels (Sync transcripts) */
 async function relabel(admin: SupabaseClient, cache: Map<string, Cla>, id: string) {
   const { data: c } = await admin.from('calls').select('id, tenant_id, transcript, transcript_tries, direction, emp_name, client_name, lead_id, phone').eq('id', id).maybeSingle()
   if (!c?.transcript) throw new Error('No transcript to fix.')
@@ -168,38 +219,14 @@ async function relabel(admin: SupabaseClient, cache: Map<string, Cla>, id: strin
     throw new Error(g.error)
   }
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': g.key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: g.model,
-        max_tokens: 8000,
-        temperature: 0,
-        system: RELABEL,
-        messages: [{ role: 'user', content: `${(await who(admin, c)).trim()}\n\nTRANSCRIPT:\n${String(c.transcript).slice(0, 60000)}` }],
-      }),
-    })
-    const d = await r.json().catch(() => ({}))
-    if (r.status === 429 || r.status === 529) throw new RateLimited(d?.error?.message ?? 'Claude is busy')
-    if (!r.ok) throw new Error(d?.error?.message ? `Claude: ${d.error.message}` : `Claude error ${r.status}`)
-    const text = ((d?.content ?? []) as { type: string; text?: string }[]).filter((x) => x.type === 'text').map((x) => x.text ?? '').join('').trim()
-    if (!text || !/^(Team|Customer)\b/m.test(text)) throw new Error('Claude gave no usable transcript.')
-    await admin.from('ai_usage').insert({
-      tenant_id: c.tenant_id,
-      integration_id: g.id,
-      model: g.model,
-      feature: 'call_relabel',
-      input_tokens: Number(d?.usage?.input_tokens ?? 0),
-      output_tokens: Number(d?.usage?.output_tokens ?? 0),
-      member_id: null,
-    })
-    await admin.from('calls').update({ transcript: text, transcript_redo: false, transcript_error: null, transcript_at: new Date().toISOString(), transcript_lease: null }).eq('id', id)
+    const text = await fixLabels(admin, g, c, String(c.transcript))
+    await admin.from('calls').update({ transcript: text, labels_checked: true, transcript_redo: false, transcript_error: null, transcript_lease: null }).eq('id', id)
   } catch (e) {
     if (e instanceof RateLimited) {
       await admin.from('calls').update({ transcript_lease: null }).eq('id', id)
       throw e
     }
-    // the old transcript stays as it is; after 3 tries it's left alone
+    // the transcript stays as it is; after 3 tries it's left alone
     await admin.from('calls').update({ transcript_tries: Number(c.transcript_tries) + 1, transcript_error: (e as Error).message.slice(0, 300), transcript_lease: null }).eq('id', id)
     throw e
   }
@@ -240,7 +267,7 @@ Deno.serve(async (req) => {
     const until = Date.now() + RUN_MS
     const cla = new Map<string, Cla>()
     // 1. new calls: their transcript as they come in
-    const auto = await work(admin, 'auto', null, 15, until, (id) => transcribe(admin, cache, id))
+    const auto = await work(admin, 'auto', null, 15, until, (id) => transcribe(admin, cache, id, cla))
     // 2. Sync transcripts
     const syncs: Record<string, unknown> = {}
     const { data: on } = await admin.from('transcript_syncs').select('tenant_id').eq('active', true)
@@ -249,7 +276,7 @@ Deno.serve(async (req) => {
       const cl = await claudeFor(admin, cla, t)
       const claudeOn = !('error' in cl)
       const fix = claudeOn ? await work(admin, 'relabel', t, 40, until, (id) => relabel(admin, cla, id)) : { done: 0, failed: 0, stop: 'Claude API not connected' }
-      const write = await work(admin, 'write', t, 15, until, (id) => transcribe(admin, cache, id))
+      const write = await work(admin, 'write', t, 15, until, (id) => transcribe(admin, cache, id, cla))
       syncs[t] = { fix, write }
       // finished: nothing left that its engines can do
       const { count: relabelLeft } = await admin
@@ -258,8 +285,8 @@ Deno.serve(async (req) => {
         .eq('tenant_id', t)
         .eq('source', 'callyzer')
         .eq('transcript_status', 'done')
-        .eq('transcript_redo', true)
-        .lt('transcript_at', '2026-11-21T15:00:00Z')
+        .eq('labels_checked', false)
+        .or('transcript.like.Team%,transcript.like.Customer%')
         .lt('transcript_tries', 3)
         .not('recording_path', 'is', null)
         .gte('duration_sec', 5)
@@ -273,7 +300,7 @@ Deno.serve(async (req) => {
         .not('recording_path', 'is', null)
         .gte('duration_sec', 5)
       if ((!claudeOn || !relabelLeft) && !writeLeft) {
-        await admin.from('transcript_syncs').update({ active: false, finished_at: new Date().toISOString(), note: claudeOn || !relabelLeft ? 'Done' : 'Done (Claude API not connected: old transcripts not fixed)' }).eq('tenant_id', t)
+        await admin.from('transcript_syncs').update({ active: false, finished_at: new Date().toISOString(), note: claudeOn || !relabelLeft ? 'Done' : 'Done (Claude API not connected: speaker labels not checked)' }).eq('tenant_id', t)
       }
     }
     return json({ ok: true, auto, syncs })
