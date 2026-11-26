@@ -1,9 +1,12 @@
-// sheets-sync: Google Sheet links of funnels (WhatsApp tab) → leads.
+// sheets-sync: Google Sheet links of funnels (Sheets tab) → leads.
 //
 //   POST { action: 'cron' }  + header x-cron-secret   → syncs every active sheet (run every minute by pg_cron;
 //                                                        the secret lives in the vault: public.sheets_cron_secret())
 //   POST { action: 'sync', sheet_id }  (logged-in user) → syncs one sheet now (also reads its columns)
 //   POST { action: 'info' }            (logged-in user) → { email } of the Google service account to share sheets with
+//   POST { action: 'retry', sheet_id, rows? }  (logged-in user) → the skipped rows (or these row numbers) again
+//   POST { action: 'recheck', sheet_id }       (logged-in user) → every row already handled again: phones not yet a
+//                                                                  lead of the funnel are added (nothing is duplicated)
 //
 // Sheets are read with a Google service account (secret GOOGLE_SERVICE_ACCOUNT = its JSON key file).
 // The sheet must be shared with that account's email (Viewer). Row 1 = column names.
@@ -20,6 +23,8 @@ const json = (body: unknown, status = 200) =>
 const fail = (message: string, status = 400) => json({ error: message }, status)
 
 const MAX_ROWS = 500 // per sheet per run
+// deno-lint-ignore no-explicit-any
+type Admin = any
 
 type Sheet = {
   id: string
@@ -74,7 +79,7 @@ async function readRows(token: string, s: Sheet): Promise<string[][]> {
   const g = (url: string) => fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   const meta = await g(`https://sheets.googleapis.com/v4/spreadsheets/${s.spreadsheet_id}?fields=sheets.properties(sheetId,title)`)
   if (meta.status === 403 || meta.status === 404)
-    throw new Error('Can’t open the sheet. Share it (Viewer) with the service account email shown on the WhatsApp tab.')
+    throw new Error('Can’t open the sheet. Share it (Viewer) with the service account email shown on the Sheets tab.')
   if (!meta.ok) throw new Error(`Google Sheets error (${meta.status}).`)
   const tabs = ((await meta.json()).sheets ?? []).map((x: { properties: { sheetId: number; title: string } }) => x.properties)
   const tab = tabs.find((t: { sheetId: number }) => s.gid != null && String(t.sheetId) === s.gid) ?? tabs[0]
@@ -86,13 +91,39 @@ async function readRows(token: string, s: Sheet): Promise<string[][]> {
 }
 
 // ---------- sync one sheet ----------
-async function syncSheet(admin: ReturnType<typeof createClient>, token: string, s: Sheet) {
+/** row 1 = column names; the data rows as { column: value } (row n of the sheet = data[n - 2]) */
+async function readData(admin: Admin, token: string, s: Sheet) {
+  const rows = await readRows(token, s)
+  const headers = (rows[0] ?? []).map((h, i) => String(h ?? '').trim() || `Column ${i + 1}`)
+  const data = rows.slice(1).map((r) => Object.fromEntries(headers.map((h, i) => [h, String(r[i] ?? '').trim()])))
+  const sample = data.find((r) => Object.values(r).some(Boolean)) ?? null
+  await admin.from('funnel_sheets').update({ headers, sample, total_rows: data.length }).eq('id', s.id)
+  return data
+}
+
+/** rows again (retry: the given row numbers; recheck: every row already handled), in chunks */
+async function again(admin: Admin, token: string, s: Sheet, mode: 'retry' | 'recheck', rowNos: number[] | null) {
+  const data = await readData(admin, token, s)
+  let nos = rowNos
+  if (mode === 'retry' && !nos) {
+    const { data: sk } = await admin.from('sheet_skipped_rows').select('row_no').eq('sheet_id', s.id).is('resolved_at', null).order('row_no')
+    nos = (sk ?? []).map((x: { row_no: unknown }) => Number(x.row_no))
+  }
+  if (mode === 'recheck') nos = Array.from({ length: Math.min(s.synced_rows ?? 0, data.length) }, (_, i) => i + 2)
+  nos = (nos ?? []).filter((n) => n >= 2 && n - 2 < data.length)
+  const sum = { added: 0, updated: 0, skipped: 0, existing: 0, rows: nos.length }
+  for (let i = 0; i < nos.length; i += MAX_ROWS) {
+    const part = nos.slice(i, i + MAX_ROWS)
+    const { data: out, error } = await admin.rpc('sheet_ingest', { p_sheet: s.id, p_rows: part.map((n) => data[n - 2]), p_first: part[0], p_mode: mode, p_row_nos: part }) as { data: Record<string, number> | null; error: { message: string } | null }
+    if (error) throw new Error(error.message)
+    for (const k of ['added', 'updated', 'skipped', 'existing'] as const) sum[k] += Number(out?.[k] ?? 0)
+  }
+  return sum
+}
+
+async function syncSheet(admin: Admin, token: string, s: Sheet) {
   try {
-    const rows = await readRows(token, s)
-    const headers = (rows[0] ?? []).map((h, i) => String(h ?? '').trim() || `Column ${i + 1}`)
-    const data = rows.slice(1).map((r) => Object.fromEntries(headers.map((h, i) => [h, String(r[i] ?? '').trim()])))
-    const sample = data.find((r) => Object.values(r).some(Boolean)) ?? null
-    await admin.from('funnel_sheets').update({ headers, sample }).eq('id', s.id)
+    const data = await readData(admin, token, s)
 
     let done = s.synced_rows
     if (done == null) {
@@ -163,6 +194,18 @@ Deno.serve(async (req) => {
     const out = await syncSheet(admin, token, s as Sheet)
     if (out && 'error' in out) return fail(String(out.error))
     return json(out)
+  }
+  if (body.action === 'retry' || body.action === 'recheck') {
+    const { data: s } = await asCaller.from('funnel_sheets').select(COLS).eq('id', String(body.sheet_id ?? '')).maybeSingle()
+    if (!s) return fail('Sheet not found.', 404)
+    if (!acc) return fail('The Google service account isn’t set up yet.')
+    const rows = Array.isArray(body.rows) ? (body.rows as unknown[]).map(Number).filter((n) => Number.isInteger(n)) : null
+    try {
+      const token = await googleToken(acc)
+      return json(await again(admin, token, s as Sheet, body.action, rows))
+    } catch (e) {
+      return fail((e as Error).message)
+    }
   }
   return fail('Unknown action')
 })
