@@ -12,6 +12,9 @@
 //   POST { action: 'refresh', lead_id } (from the app, logged in) → that lead now → { content, generated_at }
 //   POST { action: 'lead', lead_id } + x-cron-secret (a workflow's AI call step) → that lead now
 //
+// It also names a lead's Source when its utm_source is a code not known yet (leads.utm_source_pending -> the AI ->
+// lead_source_resolve: saved in source_aliases, every lead with that code gets it).
+//
 // Which AI writes it: System Connections → AI order → Lead AI Insights (Level 1, 2, 3; on / off; the prompt, empty =
 // the default below). The monthly ₹ limit counts every AI.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
@@ -200,6 +203,35 @@ async function gather(admin: SupabaseClient, leadId: string) {
   return { tenantId: t, text: L.join('\n') }
 }
 
+const SRC_PROMPT = `A CRM lead came from an ad or link whose utm_source is a short code. Tell which platform the lead saw it on, as the name the business uses in its list of sources when one fits (e.g. ig → Instagram, fb → Facebook, th → Threads, yt → YouTube, an → Facebook Audience Network). Reply with a short platform name (1–3 words). If the code doesn't name a platform (e.g. "manual", "test"), reply "Other".`
+
+/** a lead waiting on a new utm_source code (leads.utm_source_pending): the AI names its Source once for the workspace */
+async function resolveSource(admin: SupabaseClient, route: Route, tenantId: string, leadId: string) {
+  const { data: l } = await admin.from('leads').select('utm_source_pending').eq('id', leadId).maybeSingle()
+  const code = String(l?.utm_source_pending ?? '').trim()
+  if (!code) return
+  const { data: srcs } = await admin.from('lead_sources').select('name').eq('tenant_id', tenantId).eq('is_active', true).order('sort_order')
+  const names = ((srcs ?? []) as { name: string }[]).map((x) => x.name)
+  const res = await aiAsk(
+    route,
+    {
+      system: SRC_PROMPT,
+      messages: [{ role: 'user', text: `utm_source: "${code}"\nThe business's sources: ${names.join(', ') || '(none yet)'}` }],
+      schema: { type: 'OBJECT', properties: { source: { type: 'STRING' } }, required: ['source'] },
+      jsonShape: '{"source": string}',
+      maxTokens: 200,
+    },
+    (o) => {
+      if (!String(o.json?.source ?? '').trim()) throw new Error('no source')
+    },
+  )
+  await logUsage(admin, tenantId, res, 'lead_insight')
+  const name = String(res.json!.source).trim().slice(0, 60)
+  // the business's own spelling when it has that source
+  const own = names.find((n) => n.toLowerCase() === name.toLowerCase()) ?? name
+  await admin.rpc('lead_source_resolve', { p_tenant: tenantId, p_code: code, p_name: own })
+}
+
 const JSON_SHAPE = `{"summary": string, "interest": {"level": "hot" | "warm" | "cold", "why": string}, "needs": string, "budget": string, "timeline": string, "objections": string[], "next_action": string, "risks": string[], "asked_for": string[]}`
 
 /** one lead → the AI order (System Connections → AI order → Lead AI Insights) → summary saved */
@@ -217,6 +249,13 @@ async function summarize(admin: SupabaseClient, cache: Map<string, Route>, leadI
     }
     if (!route.enabled) throw new Error('Lead AI Insights are turned off (System Connections → AI order).')
     if (route.limitHit) throw new Error(route.limitHit)
+    // a new utm_source code: its Source first (a failure here doesn't stop the summary)
+    try {
+      await resolveSource(admin, route, t, leadId)
+    } catch (e) {
+      if (e instanceof AiBusy) throw e
+      console.error('source', leadId, (e as Error).message)
+    }
     const res = await aiAsk(route, { system: route.prompt ?? PROMPT, messages: [{ role: 'user', text }], schema: SCHEMA, jsonShape: JSON_SHAPE, maxTokens: 4000 }, (o) => {
       if (!o.json?.summary) throw new Error('no summary')
     })
