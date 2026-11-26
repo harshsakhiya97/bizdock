@@ -13,6 +13,18 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.38',
+    date: '2026-11-26',
+    title: 'Lead ad info and Source from UTMs, wa_chat_list, funnel ad leads',
+    summary: 'Migrations 20261126190000_wa_chat_list, 20261126200000_lead_ad_info, 20261126210000_funnel_ad_lead_counts, 20261126220000_lead_ad_fill_v2 (all applied). Edge function: lead-insight (deployed).',
+    new: [
+      'leads.ad_campaign / ad_adset / ad_name / fbclid / gclid / utm_source_pending; private.lead_ad_fill (names from utm_id / utm_term / h_ad_id looked up in meta / google campaigns, ad sets, ads; else utm_campaign / utm_term text / utm_medium unless generic / utm_content; sheet name for Google Sheet leads) and the Source from utm_source (private.source_for_code: list + source_aliases); trigger leads_ad_info; every lead filled.',
+      'source_aliases + lead_source_resolve (service role): lead-insight asks the AI once per new utm_source code before the summary and gives every waiting lead the Source.',
+      'wa_chat_list(p_tenant, p_from, p_to, p_q, p_offset, p_limit): one row per number (newest message, lead name, replies), access checked once.',
+      'funnel_ad_lead_counts and funnel_ad_leads(p_funnel, p_from, p_to): the funnel’s leads with their ad, warm / not interested / closed (Funnels → view).',
+    ],
+  },
+  {
     version: '0.37',
     date: '2026-11-26',
     title: 'Razorpay accounts, lead list extras v3, funnel campaign tags',
