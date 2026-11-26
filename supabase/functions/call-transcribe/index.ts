@@ -105,20 +105,22 @@ async function transcribe(admin: SupabaseClient, cache: Map<string, Gem>, id: st
     })
     // Claude checks who said what (if connected); if it can't, Gemini's labels stay and Sync transcripts checks it later
     let checked = false
+    let labelErr: string | null = null
     if (/^(Team|Customer)\b/m.test(transcript)) {
       const cl = await claudeFor(admin, cla, c.tenant_id)
       if (!('error' in cl)) {
         try {
           transcript = await fixLabels(admin, cl, c, transcript)
           checked = true
-        } catch {
-          /* Gemini's labels stay */
+        } catch (e) {
+          // Gemini's labels stay; the reason is kept on the call
+          labelErr = `Speaker check: ${(e as Error).message}`.slice(0, 300)
         }
       }
     }
     await admin
       .from('calls')
-      .update({ transcript: transcript || '(no conversation)', labels_checked: checked, transcript_status: 'done', transcript_error: null, transcript_at: new Date().toISOString(), transcript_lease: null, transcript_redo: false })
+      .update({ transcript: transcript || '(no conversation)', labels_checked: checked, transcript_status: 'done', transcript_error: labelErr, transcript_at: new Date().toISOString(), transcript_lease: null, transcript_redo: false })
       .eq('id', id)
     return transcript
   } catch (e) {
@@ -186,7 +188,7 @@ async function fixLabels(admin: SupabaseClient, g: { id: string; key: string; mo
     body: JSON.stringify({
       model: g.model,
       max_tokens: 8000,
-      temperature: 0,
+      // no temperature: newer Claude models refuse it
       system: RELABEL,
       messages: [{ role: 'user', content: `${(await who(admin, c)).trim()}\n\nTRANSCRIPT:\n${text.slice(0, 60000)}` }],
     }),

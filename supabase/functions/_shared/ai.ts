@@ -155,7 +155,7 @@ async function claude(l: Level, q: Ask): Promise<Out> {
       body: JSON.stringify({
         model: l.model,
         max_tokens: Math.min(q.maxTokens ?? 4096, 8192),
-        temperature: q.temperature ?? 0.3,
+        // no temperature: newer Claude models refuse it
         system,
         messages: q.messages.map((m) => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text })),
       }),
