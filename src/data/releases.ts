@@ -13,6 +13,21 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.37',
+    date: '2026-11-26',
+    title: 'Razorpay accounts, lead list extras v3, funnel campaign tags',
+    summary: 'Migrations 20261126150000_razorpay_accounts, 20261126160000_lead_list_extras_v3, 20261126170000_funnel_campaign_tags, 20261126180000_funnel_campaign_counts (all applied). No edge function changes.',
+    new: [
+      'Razorpay: integrations_one_per_provider no longer covers razorpay; integrations_razorpay_name unique (tenant_id, lower(label)); razorpay_accounts(p_tenant) → id, label.',
+      'lead_list_extras_v3(p_tenant, p_sub, p_funnel): scope and sub-businesses checked once, the leads collected first, notes / follow-ups / calls / meetings looked up with = any(...); lead_list_extras_v2 now calls it.',
+      'funnels.meta_tags / google_tags; private.tag_hit; private.link_campaigns_by_tags(p_tenant) (on tags saved: trigger funnel_tags_link) and triggers meta_campaign_tag_link / google_campaign_tag_link (a campaign synced in or renamed joins the oldest funnel whose tag its name has, if not linked yet). Pride tags: VSL, Studio Visit, ₹30,000 Podcast Host.',
+      'funnel_campaign_counts(p_funnel) → {meta, google}: linked campaigns that match a tag (Funnel tab counts).',
+    ],
+    fixed: [
+      'lead_list_extras_v2 hit the statement timeout (about 13 s) under load.',
+    ],
+  },
+  {
     version: '0.36',
     date: '2026-11-26',
     title: 'Paid Podcast board data, transcript speaker check, Claude without temperature',
