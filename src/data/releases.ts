@@ -16,7 +16,7 @@ export const releases: Release[] = [
     version: '0.35',
     date: '2026-11-24',
     title: 'Lead AI summaries, AI order, lead / funnel page reads',
-    summary: 'Migrations 20261124130000_lead_insights, 20261125100000_lead_pod_steps, 20261125110000_razorpay_auto_capture, 20261125120000_can_capture_payments, 20261125130000_funnel_report_permission, 140000_webhook_form_step, 150000_lead_page_reads, 160000_lead_ai_ready, 170000_ai_routes, 180000_integrations_keep_keys_definer, 190000_funnel_page_reads, 20261125140000_ai_call_transcript, 20261125150000_funnel_flow_detail, 20261125160000_list_follow_ups, 20261125170000_wati_events_queue, 20261125180000_callyzer_range_report (all applied). Edge functions: lead-insight (new), gemini, hellorix (+ _shared/ai.ts), meta-preview, razorpay (auto-capture, capture action), workflow-runner, wati-webhook.',
+    summary: 'Migrations 20261124130000_lead_insights, 20261125100000_lead_pod_steps, 20261125110000_razorpay_auto_capture, 20261125120000_can_capture_payments, 20261125130000_funnel_report_permission, 140000_webhook_form_step, 150000_lead_page_reads, 160000_lead_ai_ready, 170000_ai_routes, 180000_integrations_keep_keys_definer, 190000_funnel_page_reads, 20261125140000_ai_call_transcript, 20261125150000_funnel_flow_detail, 20261125160000_list_follow_ups, 20261125170000_wati_events_queue, 20261125180000_callyzer_range_report, 20261126100000_funnel_sheets_v2, 20261126110000_sheet_lead_date (all applied). Edge functions: sheets-sync, lead-insight (new), gemini, hellorix (+ _shared/ai.ts), meta-preview, razorpay (auto-capture, capture action), workflow-runner, wati-webhook.',
     new: [
       'lead_insights (+ stale triggers on leads, follow-ups, calls, meetings, bookings, invoice payments, WhatsApp, notes), lead_insight_syncs, lead_insight_status / sync_set / claim, lead_glance(p_lead), cron lead-insight every minute → edge function lead-insight.',
       'ai_routes (per feature: levels, fail_on, enabled, prompt) and _shared/ai.ts: Level 1 → 2 → 3 fail-over, one monthly ₹ limit (Gemini + Claude prices); lead-insight, gemini (AI Insights) and hellorix (Write with AI) use it.',
@@ -29,6 +29,7 @@ export const releases: Release[] = [
       'list_follow_ups(p_tenant, p_offset, p_limit): every follow-up with its lead, the access checked once per call.',
       'wati_events + cron wati-events: WATI status updates queued by wati-webhook and worked through every minute (action process); customer replies at once.',
       'callyzer_range_report(p_tenant, p_from, p_to): Callyzer Report over a date range.',
+      'Sheets: sheet_ingest(p_sheet, p_rows, p_first, p_mode new|retry|recheck, p_row_nos): phone only, source Google Sheet, Lead date column (private.parse_sheet_date); skipped rows kept in sheet_skipped_rows; funnel_sheets.total_rows; no fixed Perisclaw columns (copied into field_map). sheets-sync actions retry, recheck.',
     ],
     fixed: [
       'integrations_keep_keys runs as owner: server-side updates of a connection’s config were refused (403) since 23 Nov.',
