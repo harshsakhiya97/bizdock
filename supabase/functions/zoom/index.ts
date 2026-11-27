@@ -337,7 +337,12 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
   // 1. who joined (several joins of one person are added up)
   let participants: Row[] = []
   try {
-    participants = await zoomAll(a, `/report/${isWebinar ? 'webinars' : 'meetings'}/${zoomId}/participants`, 'participants')
+    // the report (scope report:read:…:admin); an account connected without it (e.g. Connect with Zoom): the past
+    // meeting / webinar participants (scope meeting:read:list_past_participants / webinar:read:list_past_participants)
+    const w = isWebinar ? 'webinars' : 'meetings'
+    participants = await zoomAll(a, `/report/${w}/${zoomId}/participants`, 'participants').catch((e) =>
+      e instanceof ZoomError && /scope/i.test(e.message) ? zoomAll(a, `/past_${w}/${zoomId}/participants`, 'participants') : Promise.reject(e),
+    )
   } catch (e) {
     // 3001 "Meeting does not exist" = not held yet, or Zoom hasn't made the report yet
     notes.push(
@@ -411,7 +416,7 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
     // webinars: past_webinars (scope webinar:read:past_qa:admin), else the report
     const qa = isWebinar
       ? await zoom(a, 'GET', `/past_webinars/${zoomId}/qa`).catch(() => zoom(a, 'GET', `/report/webinars/${zoomId}/qa`))
-      : await zoom(a, 'GET', `/report/meetings/${zoomId}/qa`)
+      : await zoom(a, 'GET', `/report/meetings/${zoomId}/qa`).catch(() => zoom(a, 'GET', `/past_meetings/${zoomId}/qa`))
     for (const q of (qa.questions as Row[]) ?? []) {
       const email = norm(q.email)
       const name = String(q.name ?? '').trim()
