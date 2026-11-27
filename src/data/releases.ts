@@ -29,6 +29,9 @@ export const releases: Release[] = [
       'Log a call / Log follow-up: “Comments” (also the call history column); no Purpose anywhere; a past date can’t be picked.',
       'Lead call history: newest saved call first.',
       'Leads, Customers, Follow-ups, Meetings, Orders, Invoices, Payments, WhatsApp campaigns and Team Report keep their filters when you open a record and come back.',
+      'New booking: the payment plan starts with one part (its amount follows the total); Without GST comes first and is the default; Bill to asks GST No. before Address.',
+      'Studio bookings: just Confirmed → Completed (by itself once the booking ends) / Cancelled (only before it starts); Tentative is gone and past bookings are Completed.',
+      'Log follow-up from the list: the call is recorded for whoever logged it.',
     ],
     fixed: [
       'Log follow-up: “Meeting fixed” outcome hidden (meetings are booked instead).',
