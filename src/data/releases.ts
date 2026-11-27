@@ -13,6 +13,28 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.40',
+    date: '2026-11-27',
+    title: 'Team Report by funnel, date-only follow-ups, simpler call logging, filters that stay',
+    summary: 'Team Report splits follow-ups by funnel and credits whoever logged them; next follow-ups are picked by date only; Log a call / Log follow-up are simpler (Comments, no Purpose, meeting booking); list filters stay when you open a record and come back.',
+    new: [
+      'Reports → Team Report: a Funnel filter (the business’s funnels, plus No funnel) and a Members / Funnels switch — By funnel shows a card per funnel with each team member’s numbers and a total; every number opens its leads.',
+      'Log follow-up: an outcome about a meeting books the meeting (the follow-up is marked done once it is saved).',
+      'Masters → Follow-up outcomes: Comment required — Comments must be written for those outcomes (to start: Connected – interested, Call back later, Payment promised).',
+    ],
+    improved: [
+      'Next follow-up: a date only (Tomorrow / +3 / +7 days) — due all that day, overdue from the next day; pending follow-ups moved to their date.',
+      'The next follow-up goes to whoever logged the call (not the lead owner); pending ones set by a call moved to that caller.',
+      'Team Report: follow-ups done count for the person who logged them; Not interested / Closed leads are left out of First call pending and No follow-up date.',
+      'Log a call / Log follow-up: “Comments” (also the call history column); no Purpose anywhere; a past date can’t be picked.',
+      'Lead call history: newest saved call first.',
+      'Leads, Customers, Follow-ups, Meetings, Orders, Invoices, Payments, WhatsApp campaigns and Team Report keep their filters when you open a record and come back.',
+    ],
+    fixed: [
+      'Log follow-up: “Meeting fixed” outcome hidden (meetings are booked instead).',
+    ],
+  },
+  {
     version: '0.39',
     date: '2026-11-27',
     title: 'Access checks once per request, sheet ad campaign',
