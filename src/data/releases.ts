@@ -13,6 +13,17 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.39',
+    date: '2026-11-27',
+    title: 'Access checks once per request, sheet ad campaign',
+    summary: 'Migrations 20261127100000_sheet_ad_campaign, 20261127110000_access_checks_once (both applied). No edge function changes.',
+    new: [
+      'is_platform_owner, is_member, my_member_id, has_permission, area_scope, lead_scope, can_access_business, can_access_sub and my_team_ids (my_team, can_see_lead use it) remember their answer for the rest of the transaction (private.memo_k: a transaction-local setting keyed by the user and the inputs, plus bz.gen — raised by memo_bump when tenant_members / member_businesses / roles / platform_owners change). Same rules; visible row counts checked identical for 3 users on 7 tables.',
+      'funnel_sheets.ad_platform / ad_campaign_id; lead_ad_fill v3 (the sheet’s campaign → Campaign Name, Source Facebook / Google); sheet_campaign_link re-tags the sheet’s leads (bizdock.quiet: AI Insights left alone).',
+      'Index calls_transcribe_todo for the call-transcribe job check.',
+    ],
+  },
+  {
     version: '0.38',
     date: '2026-11-26',
     title: 'Lead ad info and Source from UTMs, wa_chat_list, funnel ad leads',
