@@ -13,6 +13,26 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.42',
+    date: '2026-11-28',
+    title: 'Owner dashboard, AI Insights, campaign tables with budgets, Hinglish call transcripts',
+    summary: 'A new Dashboard shows everything at a glance — money, businesses, funnels, marketing, team, calls, alerts and AI Insights — with lists behind every number; funnel Facebook / Google Ads tabs show campaigns → ad sets → ads with status, daily budget and spend; funnel cards show today’s ads numbers; AI call conversations read in Hinglish.',
+    new: [
+      'Dashboard (for everyone for now): revenue, ad spend, expenses, profit and money due vs the period before; daily chart; Needs attention; Alerts; AI Insights; profit by business; funnels; leads by source; top campaigns (open one to see its ads); team and calls; what’s next. Click any number to see the list behind it.',
+      'Dashboard → Alerts (every 5 minutes): connection errors, callers with no call for 3 hours, team members with follow-ups due and none logged, leads waiting over an hour for the first call, campaigns spending with no leads, WhatsApp failures, Zoom errors.',
+      'Dashboard → AI Insights: profit / loss, return on ad spend, revenue and cost-per-lead trends, best and losing business, campaigns with no leads, cheapest and costliest campaigns, slow funnels, overdue follow-ups, connect rate — and, for one business, speed to the first call, show-up rate and collections.',
+      'Dashboard with one business picked: its profit card, lead quality, speed to the first call, call outcomes, meetings, billing, studio bookings and orders. View details on a business opens it; All businesses goes back.',
+      'Funnel → Facebook Ads / Google Ads: tags, one date range, then Campaigns (campaign → ad set / ad group → ad, with status, daily budget, spend for the dates and total spend), Ads (every ad with its spend) and Insights — each opens and closes.',
+      'Funnels list: daily ad budget, spend and leads today, spend / leads / cost per lead for the last 30 days on each funnel card.',
+      'AI call → Conversation: shown in Hinglish (Hindi in English letters), with a Hindi toggle. The call itself stays Hindi.',
+    ],
+    improved: [
+      'Funnel ads report: Insights renamed AI Insights.',
+      'Facebook and Google sync bring in campaign / ad set budgets.',
+      'Pages use the full width of the window, also when zoomed out.',
+    ],
+  },
+  {
     version: '0.41',
     date: '2026-11-28',
     title: 'Zoom meetings: join as host, auto Done, recordings you can share',
