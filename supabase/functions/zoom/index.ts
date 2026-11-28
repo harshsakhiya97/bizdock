@@ -17,6 +17,9 @@
 //   { action: 'sync', kind, id }                              retry creating the Zoom meeting
 //   { action: 'rec_ai', id, copy? }                           make a recording's transcript / summary again (and copy again)
 //
+// Anyone with the link (no login):
+//   { action: 'watch', tenant_id, zoom_id }                    a meeting's / webinar's recording → { title, recorded_at, duration_sec, video_url, audio_url }
+//                                                             (links valid 6 hours) — <app>/zoom/<meeting-id>
 // Keys never reach the browser. Times are India time.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
 
@@ -951,6 +954,30 @@ Deno.serve(async (req) => {
       }
     }
     return fail('Unknown action')
+  }
+
+  // ---- anyone with the link: <app>/zoom/<meeting-id> ----
+  if (action === 'watch') {
+    const zid = String(b.zoom_id ?? '').replace(/\D/g, '')
+    const tid = String(b.tenant_id ?? '')
+    if (zid.length < 9 || !/^[0-9a-f-]{36}$/i.test(tid)) return fail('Recording not found.', 404)
+    const [{ data: m }, { data: ev }] = await Promise.all([
+      admin.from('meetings').select('id').eq('tenant_id', tid).eq('zoom_meeting_id', zid).limit(1).maybeSingle(),
+      admin.from('events').select('id').eq('tenant_id', tid).eq('zoom_webinar_id', zid).limit(1).maybeSingle(),
+    ])
+    if (!m && !ev) return fail('Recording not found.', 404)
+    const { data: rec } = await admin
+      .from('meeting_recordings')
+      .select('title, recorded_at, duration_sec, video_path, audio_path')
+      .eq('tenant_id', tid)
+      .eq(m ? 'meeting_id' : 'event_id', (m ?? ev)!.id)
+      .eq('copy_status', 'done')
+      .order('recorded_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!rec || (!rec.video_path && !rec.audio_path)) return fail('The recording isn’t ready yet — please check again a little later.', 404)
+    const sign = async (path: string | null) => (path ? (await admin.storage.from(REC_BUCKET).createSignedUrl(path, 6 * 3600)).data?.signedUrl ?? null : null)
+    return json({ title: rec.title, recorded_at: rec.recorded_at, duration_sec: rec.duration_sec, video_url: await sign(rec.video_path), audio_url: await sign(rec.audio_path) })
   }
 
   // ---- from the app ----
