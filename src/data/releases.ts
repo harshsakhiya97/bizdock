@@ -18,7 +18,7 @@ export const releases: Release[] = [
     title: 'Zoom meetings: join as host, auto Done, recordings you can share',
     summary: 'Zoom meetings join as the host, turn Done by themselves and can be cancelled (their Zoom meeting goes too); the Zoom section is tidier, transcripts read as a timed list and a recording has a link anyone can watch.',
     new: [
-      'Zoom recording: a link anyone can watch (<app>/zoom/<meeting-id>) with Copy link.',
+      'Zoom recording: a link anyone can watch (<app>/zoom/<meeting-id>) with Copy link — the video on the left, its Summary / Transcript on the right.',
       'Meetings: Cancel for every meeting (asks first) — it is marked Cancelled and its Zoom meeting is deleted.',
       'Settings & integrations → Zoom → Settings: the Host key (also for accounts connected with Zoom).',
     ],
