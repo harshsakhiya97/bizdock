@@ -13,6 +13,27 @@ export type Release = {
 // Newest first. The first entry is shown as "Current".
 export const releases: Release[] = [
   {
+    version: '0.41',
+    date: '2026-11-28',
+    title: 'Zoom meetings: join as host, auto Done, recordings you can share',
+    summary: 'Zoom meetings join as the host, turn Done by themselves and can be cancelled (their Zoom meeting goes too); the Zoom section is tidier, transcripts read as a timed list and a recording has a link anyone can watch.',
+    new: [
+      'Zoom recording: a link anyone can watch (<app>/zoom/<meeting-id>) with Copy link.',
+      'Meetings: Cancel for every meeting (asks first) — it is marked Cancelled and its Zoom meeting is deleted.',
+      'Settings & integrations → Zoom → Settings: the Host key (also for accounts connected with Zoom).',
+    ],
+    improved: [
+      'Zoom: one Join — opens Zoom as the host (a fresh host link each time; the host key is shown if Zoom opens you as a guest). Copy link removed; no Join / Copy invite once it is over.',
+      'A Zoom meeting turns Done by itself 5 minutes after it ends (no Done button for it); attendance, Q&A and the recording come in then too.',
+      'Zoom section: Refresh (once fetched) and Add recording (once it ended), then Last fetched, then Attendance / Q&A / Chat / Recording tabs with their counts; none on a cancelled meeting.',
+      'Recording transcript: a list — time · speaker · what was said.',
+      'Refresh copies a recording’s video again when it was skipped (e.g. over the upload limit).',
+    ],
+    fixed: [
+      'Zoom attendance and Q&A for accounts connected with Zoom (no report permission): read from the past meeting instead.',
+    ],
+  },
+  {
     version: '0.40',
     date: '2026-11-27',
     title: 'Team Report by funnel, date-only follow-ups, simpler call logging, filters that stay',
