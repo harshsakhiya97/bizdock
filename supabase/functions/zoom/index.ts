@@ -325,7 +325,7 @@ function parseChat(text: string, startedAt: number) {
   return out.filter((c) => c.body)
 }
 
-async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string) {
+async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string, manual = false) {
   const table = kind === 'meeting' ? 'meetings' : 'events'
   const { data: row } = await admin.from(table).select('*').eq('id', id).maybeSingle()
   const zoomId = kind === 'meeting' ? row?.zoom_meeting_id : row?.zoom_webinar_id
@@ -531,6 +531,18 @@ async function pull(admin: SupabaseClient, kind: 'meeting' | 'event', id: string
     const f = await findRecording(admin, kind, id)
     recording = f.found
     if (!f.found && f.note && Date.now() - endAt > 30 * 60_000) notes.push(f.note)
+    // Refresh: a recording whose video wasn't copied (e.g. it was over the upload limit) is copied again
+    if (f.found && manual) {
+      const { data: again } = await admin
+        .from('meeting_recordings')
+        .update({ copy_status: 'waiting', copy_tries: 0 })
+        .eq(kind === 'meeting' ? 'meeting_id' : 'event_id', id)
+        .eq('source', 'zoom')
+        .is('video_path', null)
+        .like('copy_error', 'Video not copied%')
+        .select('id')
+      if (again?.length) notes.push('copying the video again (a few minutes)')
+    }
   } catch (e) {
     notes.push(`Recording: ${(e as Error).message}`)
   }
@@ -1003,7 +1015,7 @@ Deno.serve(async (req) => {
         const r = kind === 'event' ? await syncEvent(admin, String(b.id)) : await syncMeeting(admin, String(b.id))
         return 'error' in r ? fail(String(r.error)) : json(r)
       }
-      const r = await pull(admin, kind, String(b.id))
+      const r = await pull(admin, kind, String(b.id), true)
       return 'error' in r ? fail(String(r.error)) : json(r)
     } catch (e) {
       return fail((e as Error).message)
