@@ -18,7 +18,7 @@
 //   { action: 'rec_ai', id, copy? }                           make a recording's transcript / summary again (and copy again)
 //
 // Anyone with the link (no login):
-//   { action: 'watch', tenant_id, zoom_id }                    a meeting's / webinar's recording → { title, recorded_at, duration_sec, video_url, audio_url }
+//   { action: 'watch', tenant_id, zoom_id }                    a meeting's / webinar's recording → { title, recorded_at, duration_sec, video_url, audio_url, summary, transcript }
 //                                                             (links valid 6 hours) — <app>/zoom/<meeting-id>
 // Keys never reach the browser. Times are India time.
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4'
@@ -968,7 +968,7 @@ Deno.serve(async (req) => {
     if (!m && !ev) return fail('Recording not found.', 404)
     const { data: rec } = await admin
       .from('meeting_recordings')
-      .select('title, recorded_at, duration_sec, video_path, audio_path')
+      .select('title, recorded_at, duration_sec, video_path, audio_path, summary, transcript')
       .eq('tenant_id', tid)
       .eq(m ? 'meeting_id' : 'event_id', (m ?? ev)!.id)
       .eq('copy_status', 'done')
@@ -977,7 +977,7 @@ Deno.serve(async (req) => {
       .maybeSingle()
     if (!rec || (!rec.video_path && !rec.audio_path)) return fail('The recording isn’t ready yet — please check again a little later.', 404)
     const sign = async (path: string | null) => (path ? (await admin.storage.from(REC_BUCKET).createSignedUrl(path, 6 * 3600)).data?.signedUrl ?? null : null)
-    return json({ title: rec.title, recorded_at: rec.recorded_at, duration_sec: rec.duration_sec, video_url: await sign(rec.video_path), audio_url: await sign(rec.audio_path) })
+    return json({ title: rec.title, recorded_at: rec.recorded_at, duration_sec: rec.duration_sec, video_url: await sign(rec.video_path), audio_url: await sign(rec.audio_path), summary: rec.summary ?? null, transcript: rec.transcript ?? null })
   }
 
   // ---- from the app ----
