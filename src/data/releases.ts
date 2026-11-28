@@ -30,6 +30,7 @@ export const releases: Release[] = [
       'Funnel ads report: Insights renamed AI Insights.',
       'Facebook and Google sync bring in campaign / ad set budgets.',
       'Pages use the full width of the window, also when zoomed out.',
+      'Funnels list: each card appears whole — its lead counts and ads numbers load with it (no jump).',
     ],
   },
   {
