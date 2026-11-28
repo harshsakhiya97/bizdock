@@ -95,8 +95,8 @@ async function pullAccount(admin: SupabaseClient, a: Account, token: string, app
     // 1. campaigns, ad sets, ads
     if (!a.structure_at || Date.now() - Date.parse(a.structure_at) > 3 * 3600_000) {
       const levels: [string, string, string][] = [
-        ['campaign', 'campaigns', 'id,name,status,effective_status,objective,created_time'],
-        ['adset', 'adsets', 'id,name,campaign_id,status,effective_status'],
+        ['campaign', 'campaigns', 'id,name,status,effective_status,objective,created_time,daily_budget,lifetime_budget'],
+        ['adset', 'adsets', 'id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget'],
         ['ad', 'ads', 'id,name,adset_id,campaign_id,status,effective_status'],
       ]
       for (const [level, path, fields] of levels) {
