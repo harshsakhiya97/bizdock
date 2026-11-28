@@ -13,6 +13,7 @@
 // From the app (the caller's login decides what they may do):
 //   { action: 'test', id }                                    check an account's keys (Settings & integrations)
 //   { action: 'pull', kind, id }                              fetch attendance / comments now
+//   { action: 'start', kind, id }                             Join as the host: a fresh start link (+ the account's host key)
 //   { action: 'sync', kind, id }                              retry creating the Zoom meeting
 //   { action: 'rec_ai', id, copy? }                           make a recording's transcript / summary again (and copy again)
 //
@@ -969,6 +970,27 @@ Deno.serve(async (req) => {
     if (!seen) return fail('Not found.', 404)
     await admin.from('meeting_recordings').update({ ai_status: 'waiting', ai_tries: 0, ai_error: null, ...(b.copy ? { copy_status: 'waiting', copy_tries: 0, copy_error: null } : {}) }).eq('id', String(b.id))
     return json({ ok: true })
+  }
+
+  if (action === 'start') {
+    // Join (as the host): Zoom's start link lasts ~2 hours, so a fresh one each time; plus the host key to claim host
+    const kind = b.kind === 'event' ? 'event' : 'meeting'
+    const table = kind === 'meeting' ? 'meetings' : 'events'
+    const { data: seen } = await asCaller.from(table).select('id').eq('id', String(b.id)).maybeSingle()
+    if (!seen) return fail('Not found.', 404)
+    const { data: row } = await admin.from(table).select('*').eq('id', String(b.id)).maybeSingle()
+    const zoomId = kind === 'meeting' ? row?.zoom_meeting_id : row?.zoom_webinar_id
+    const a = await loadAccount(admin, row?.zoom_account_id)
+    if (!row || !zoomId || !a) return fail('No Zoom meeting on this one.')
+    const { data: integ } = await admin.from('integrations').select('config').eq('id', a.id).maybeSingle()
+    const hostKey = String((integ?.config as Row | null)?.host_key ?? '').trim() || null
+    try {
+      const m = await zoom(a, 'GET', `/${kind === 'event' && row.zoom_kind === 'webinar' ? 'webinars' : 'meetings'}/${zoomId}`)
+      const startUrl = String(m.start_url ?? '')
+      return json({ start_url: startUrl || null, join_url: m.join_url ?? null, host_key: hostKey })
+    } catch (e) {
+      return json({ start_url: null, join_url: null, host_key: hostKey, error: (e as Error).message })
+    }
   }
 
   if (action === 'pull' || action === 'sync') {
