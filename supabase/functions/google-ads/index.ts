@@ -211,8 +211,8 @@ async function pullAccount(admin: SupabaseClient, a: Account, cfg: Cfg, token: s
   try {
     // 1. campaigns, ad groups, ads
     if (!a.structure_at || Date.now() - Date.parse(a.structure_at) > 3 * 3600_000) {
-      const camps = await g.query(cid, "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type FROM campaign WHERE campaign.status != 'REMOVED'")
-      await put('google_campaigns', camps.map((r) => ({ tenant_id: a.tenant_id, campaign_id: String(r.campaign.id), account_id: a.id, name: r.campaign.name ?? null, status: r.campaign.status ?? null, channel: r.campaign.advertisingChannelType ?? null, updated_at: now })), 'tenant_id,campaign_id')
+      const camps = await g.query(cid, "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.amount_micros, campaign_budget.total_amount_micros FROM campaign WHERE campaign.status != 'REMOVED'")
+      await put('google_campaigns', camps.map((r) => ({ tenant_id: a.tenant_id, campaign_id: String(r.campaign.id), account_id: a.id, name: r.campaign.name ?? null, status: r.campaign.status ?? null, channel: r.campaign.advertisingChannelType ?? null, daily_budget: r.campaignBudget?.amountMicros != null ? Number(r.campaignBudget.amountMicros) / 1e6 : null, total_budget: r.campaignBudget?.totalAmountMicros != null ? Number(r.campaignBudget.totalAmountMicros) / 1e6 : null, updated_at: now })), 'tenant_id,campaign_id')
       const groups = await g.query(cid, "SELECT ad_group.id, ad_group.name, ad_group.status, campaign.id FROM ad_group WHERE ad_group.status != 'REMOVED'")
       await put('google_ad_groups', groups.map((r) => ({ tenant_id: a.tenant_id, ad_group_id: String(r.adGroup.id), campaign_id: String(r.campaign?.id ?? ''), account_id: a.id, name: r.adGroup.name ?? null, status: r.adGroup.status ?? null, updated_at: now })), 'tenant_id,ad_group_id')
       const ads = await g.query(
